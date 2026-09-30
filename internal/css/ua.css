@@ -1,0 +1,19 @@
+/* NeferGUI UA defaults: stack overlay behavior is interpreted by layout from its type. */
+row { display: flex; flex-direction: row; }
+column { display: flex; flex-direction: column; }
+stack { display: block; }
+/* Additive semantic defaults; author CSS may override every declaration. */
+radio, slider, separator, spacer, icon { display: block; }
+button { text-align: center; }
+button, checkbox { cursor: pointer; }
+/* Room for the painted indicator (one em) and the slider track. */
+checkbox, radio { padding-left: 1.5em; }
+slider { padding-bottom: 1.25em; }
+input, textarea { cursor: text; }
+button:disabled, checkbox:disabled, input:disabled, textarea:disabled { cursor: not-allowed; }
+radio { min-height: 18px; cursor: pointer; }
+slider { min-height: 18px; cursor: pointer; }
+separator { height: 1px; background: #808080; }
+spacer { min-height: 8px; }
+icon { min-width: 16px; min-height: 16px; }
+checkbox:disabled, radio:disabled, slider:disabled { opacity: 0.5; cursor: not-allowed; }

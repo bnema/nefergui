@@ -1,0 +1,418 @@
+{
+  "Tree": {
+    "ID": "scroll",
+    "Kind": "scroll",
+    "Border": {
+      "X": 0,
+      "Y": 0,
+      "W": 30,
+      "H": 30
+    },
+    "Content": {
+      "X": 0,
+      "Y": 0,
+      "W": 30,
+      "H": 30
+    },
+    "Clip": {
+      "X": 0,
+      "Y": 0,
+      "W": 30,
+      "H": 30
+    },
+    "Margin": {
+      "Top": 0,
+      "Right": 0,
+      "Bottom": 0,
+      "Left": 0
+    },
+    "Padding": {
+      "Top": 0,
+      "Right": 0,
+      "Bottom": 0,
+      "Left": 0
+    },
+    "BorderWidths": {
+      "Top": 0,
+      "Right": 0,
+      "Bottom": 0,
+      "Left": 0
+    },
+    "ContentSize": {
+      "W": 30,
+      "H": 50
+    },
+    "ScrollX": 0,
+    "ScrollY": 10,
+    "Children": [
+      {
+        "ID": "stack",
+        "Kind": "stack",
+        "Border": {
+          "X": 0,
+          "Y": -10,
+          "W": 30,
+          "H": 50
+        },
+        "Content": {
+          "X": 0,
+          "Y": -10,
+          "W": 30,
+          "H": 50
+        },
+        "Clip": {
+          "X": 0,
+          "Y": -10,
+          "W": 0,
+          "H": 0
+        },
+        "Margin": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "Padding": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "BorderWidths": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "ContentSize": {
+          "W": 50,
+          "H": 50
+        },
+        "ScrollX": 0,
+        "ScrollY": 0,
+        "Children": [
+          {
+            "ID": "back",
+            "Kind": "box",
+            "Border": {
+              "X": 0,
+              "Y": -10,
+              "W": 50,
+              "H": 50
+            },
+            "Content": {
+              "X": 0,
+              "Y": -10,
+              "W": 50,
+              "H": 50
+            },
+            "Clip": {
+              "X": 0,
+              "Y": -10,
+              "W": 0,
+              "H": 0
+            },
+            "Margin": {
+              "Top": 0,
+              "Right": 0,
+              "Bottom": 0,
+              "Left": 0
+            },
+            "Padding": {
+              "Top": 0,
+              "Right": 0,
+              "Bottom": 0,
+              "Left": 0
+            },
+            "BorderWidths": {
+              "Top": 0,
+              "Right": 0,
+              "Bottom": 0,
+              "Left": 0
+            },
+            "ContentSize": {
+              "W": 0,
+              "H": 0
+            },
+            "ScrollX": 0,
+            "ScrollY": 0,
+            "Children": null,
+            "Clipped": false
+          },
+          {
+            "ID": "front",
+            "Kind": "box",
+            "Border": {
+              "X": 0,
+              "Y": -10,
+              "W": 50,
+              "H": 50
+            },
+            "Content": {
+              "X": 0,
+              "Y": -10,
+              "W": 50,
+              "H": 50
+            },
+            "Clip": {
+              "X": 0,
+              "Y": -10,
+              "W": 0,
+              "H": 0
+            },
+            "Margin": {
+              "Top": 0,
+              "Right": 0,
+              "Bottom": 0,
+              "Left": 0
+            },
+            "Padding": {
+              "Top": 0,
+              "Right": 0,
+              "Bottom": 0,
+              "Left": 0
+            },
+            "BorderWidths": {
+              "Top": 0,
+              "Right": 0,
+              "Bottom": 0,
+              "Left": 0
+            },
+            "ContentSize": {
+              "W": 0,
+              "H": 0
+            },
+            "ScrollX": 0,
+            "ScrollY": 0,
+            "Children": null,
+            "Clipped": false
+          }
+        ],
+        "Clipped": false
+      }
+    ],
+    "Clipped": true
+  },
+  "Display": [
+    {
+      "Op": "clip-push",
+      "ID": "scroll",
+      "Rect": {
+        "X": 0,
+        "Y": 0,
+        "W": 30,
+        "H": 30
+      },
+      "Color": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+      },
+      "Opacity": 0,
+      "Widths": {
+        "Top": 0,
+        "Right": 0,
+        "Bottom": 0,
+        "Left": 0
+      },
+      "Colors": {
+        "Top": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Right": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Bottom": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Left": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        }
+      },
+      "Radii": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "Op": "rect",
+      "ID": "back",
+      "Rect": {
+        "X": 0,
+        "Y": -10,
+        "W": 50,
+        "H": 50
+      },
+      "Color": {
+        "R": 1,
+        "G": 0,
+        "B": 0,
+        "A": 1
+      },
+      "Opacity": 0,
+      "Widths": {
+        "Top": 0,
+        "Right": 0,
+        "Bottom": 0,
+        "Left": 0
+      },
+      "Colors": {
+        "Top": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Right": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Bottom": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Left": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        }
+      },
+      "Radii": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "Op": "rect",
+      "ID": "front",
+      "Rect": {
+        "X": 0,
+        "Y": -10,
+        "W": 50,
+        "H": 50
+      },
+      "Color": {
+        "R": 1,
+        "G": 0,
+        "B": 0,
+        "A": 1
+      },
+      "Opacity": 0,
+      "Widths": {
+        "Top": 0,
+        "Right": 0,
+        "Bottom": 0,
+        "Left": 0
+      },
+      "Colors": {
+        "Top": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Right": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Bottom": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Left": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        }
+      },
+      "Radii": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "Op": "clip-pop",
+      "ID": "scroll",
+      "Rect": {
+        "X": 0,
+        "Y": 0,
+        "W": 30,
+        "H": 30
+      },
+      "Color": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+      },
+      "Opacity": 0,
+      "Widths": {
+        "Top": 0,
+        "Right": 0,
+        "Bottom": 0,
+        "Left": 0
+      },
+      "Colors": {
+        "Top": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Right": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Bottom": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Left": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        }
+      },
+      "Radii": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

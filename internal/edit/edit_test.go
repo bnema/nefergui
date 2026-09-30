@@ -1,0 +1,121 @@
+package edit
+
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+type memoryClipboard struct{ data []byte }
+
+func (m *memoryClipboard) ReadText(limit int) ([]byte, error) { return m.data, nil }
+func (m *memoryClipboard) WriteText(v []byte) error           { m.data = append([]byte(nil), v...); return nil }
+
+type fakeIME struct {
+	enabled, disabled int
+	surrounding       string
+	cursor, anchor    int
+}
+
+func (f *fakeIME) Enable()                              { f.enabled++ }
+func (f *fakeIME) Disable()                             { f.disabled++ }
+func (f *fakeIME) Surrounding(v string, c, a int)       { f.surrounding = v; f.cursor = c; f.anchor = a }
+func (f *fakeIME) CursorRect(x, y, w, h float64)        {}
+func (f *fakeIME) ContentType(password, multiline bool) {}
+func TestGraphemesAndIME(t *testing.T) {
+	s := State{}
+	s.Sync("e\u0301👩‍💻a")
+	s.Move(len(s.Value), false)
+	s.Left(false)
+	if s.Cursor != len("e\u0301👩‍💻") {
+		t.Fatal(s.Cursor)
+	}
+	s.Left(false)
+	if s.Cursor != len("e\u0301") {
+		t.Fatal(s.Cursor)
+	}
+	s.Select(0, len("e\u0301"))
+	if !s.Delete(true, false) || s.Value != "👩‍💻a" {
+		t.Fatalf("%+v", s)
+	}
+	s.Select(len("👩‍💻"), len("👩‍💻"))
+	if !s.Done(IMEBatch{DeleteBefore: 1, Commit: "é"}) || s.Value != "éa" {
+		t.Fatalf("delete bytes: %+v", s)
+	}
+	s.Done(IMEBatch{Preedit: "候補", Begin: 0, End: len("候補")})
+	if s.Preedit != "候補" || s.Value != "éa" {
+		t.Fatal(s)
+	}
+	ime := &fakeIME{}
+	s.Focus(ime, false, false)
+	s.Blur(ime)
+	if ime.enabled != 1 || ime.disabled != 1 || s.Preedit != "" {
+		t.Fatal(s, ime)
+	}
+}
+func TestClipboardAndMask(t *testing.T) {
+	s := State{}
+	s.Sync("s3crét")
+	s.Select(0, len(s.Value))
+	c := &memoryClipboard{}
+	if err := s.Copy(c, true); err != nil || len(c.data) != 0 {
+		t.Fatal(err)
+	}
+	if s.Mask() != "••••••" {
+		t.Fatal(s.Mask())
+	}
+	c.data = []byte{0xff}
+	if changed, _ := s.Paste(c); changed {
+		t.Fatal(s)
+	}
+	c.data = []byte(strings.Repeat("x", MaxClipboardBytes+1))
+	if changed, _ := s.Paste(c); changed {
+		t.Fatal(s)
+	}
+	c.data = []byte("ok")
+	if changed, _ := s.Paste(c); !changed || s.Value != "ok" {
+		t.Fatal(s)
+	}
+}
+func FuzzEdit(f *testing.F) {
+	f.Add([]byte("e\u0301👩‍💻🧪"))
+	f.Add([]byte{0xff, 0x80, 0x00})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 2048 {
+			return
+		}
+		var s State
+		for _, op := range data {
+			switch op % 7 {
+			case 0:
+				s.Left(false)
+			case 1:
+				s.Right(true)
+			case 2:
+				s.Insert("e\u0301")
+			case 3:
+				s.Insert("👩‍💻")
+			case 4:
+				s.Delete(true, false)
+			case 5:
+				s.Delete(false, true)
+			case 6:
+				s.Sync(strings.ToValidUTF8(string(data), "�"))
+			}
+			if !utf8.ValidString(s.Value) {
+				t.Fatal("invalid UTF-8")
+			}
+			for _, p := range []int{s.Cursor, s.Anchor} {
+				ok := false
+				for _, v := range Boundaries(s.Value) {
+					if p == v {
+						ok = true
+					}
+				}
+				if !ok {
+					t.Fatalf("not boundary %d in %q", p, s.Value)
+				}
+			}
+		}
+	})
+}

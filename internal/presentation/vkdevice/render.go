@@ -1,0 +1,316 @@
+//go:build linux
+
+package vkdevice
+
+import (
+	"fmt"
+	"math"
+	"unsafe"
+
+	"github.com/bnema/nefergui/internal/text"
+	"github.com/bnema/purego-vulkan/vulkan"
+)
+
+// Frame records into its own command buffer and signals a binary semaphore.
+// Do not reset the command buffer or destroy the semaphore until its GPU fence
+// completes. The compositor's release point is an independent ownership gate.
+type Frame struct {
+	device           *Device
+	Pool             vulkan.CommandPool
+	Commands         vulkan.CommandBuffer
+	Done             vulkan.Fence
+	Signal           *BinaryFence
+	View             vulkan.ImageView
+	submitted        bool
+	Readback         *Readback
+	instances        *instanceBuffer
+	glyphStaging     *instanceBuffer
+	imageStaging     *instanceBuffer
+	imageCopies      []imageCopy
+	imageSerial      uint64
+	atlasRecorded    bool
+	fallbackRecorded bool
+}
+
+func (d *Device) NewFrame(img *Image) (f *Frame, err error) {
+	f = &Frame{device: d}
+	defer func() {
+		if err != nil {
+			f.Close()
+		}
+	}()
+	pool := vulkan.CommandPoolCreateInfo{SType: vulkan.StructureTypeCommandPoolCreateInfo, QueueFamilyIndex: d.QueueFamily, Flags: vulkan.CommandPoolCreateResetCommandBufferBit}
+	if err = vulkan.Check(d.Dispatch.CreateCommandPool(d.Logical, &pool, nil, &f.Pool)); err != nil {
+		return nil, err
+	}
+	allocate := vulkan.CommandBufferAllocateInfo{SType: vulkan.StructureTypeCommandBufferAllocateInfo, CommandPool: f.Pool, Level: vulkan.CommandBufferLevelPrimary, CommandBufferCount: 1}
+	if err = vulkan.Check(d.Dispatch.AllocateCommandBuffers(d.Logical, &allocate, &f.Commands)); err != nil {
+		return nil, err
+	}
+	view := vulkan.ImageViewCreateInfo{SType: vulkan.StructureTypeImageViewCreateInfo, Image: img.Image, ViewType: vulkan.ImageViewType2d, Format: vulkan.FormatB8g8r8a8Unorm, SubresourceRange: vulkan.ImageSubresourceRange{AspectMask: vulkan.ImageAspectColorBit, LevelCount: 1, LayerCount: 1}}
+	if err = vulkan.Check(d.Dispatch.CreateImageView(d.Logical, &view, nil, &f.View)); err != nil {
+		return nil, err
+	}
+	fence := vulkan.FenceCreateInfo{SType: vulkan.StructureTypeFenceCreateInfo}
+	if err = vulkan.Check(d.Dispatch.CreateFence(d.Logical, &fence, nil, &f.Done)); err != nil {
+		return nil, err
+	}
+	f.Signal, err = d.NewBinaryFence(true)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func (f *Frame) Ready() (bool, error) {
+	if !f.submitted {
+		return true, nil
+	}
+	r := f.device.Dispatch.WaitForFences(f.device.Logical, 1, &f.Done, 1, 0)
+	if r == vulkan.Timeout {
+		return false, nil
+	}
+	if err := vulkan.Check(r); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (f *Frame) Record(img *Image, pipe *Pipeline, width, height int32, rect Rect, initial bool, capture bool) error {
+	return f.record(img, pipe, width, height, initial, capture, nil, nil, nil, &rect)
+}
+
+// RecordList records an ordered list of physical-pixel quads. Reuse is gated
+// by Ready, including any instance-buffer growth.
+func (f *Frame) RecordList(img *Image, pipe *Pipeline, width, height int32, instances []Instance, uploads []text.Upload, batches []Batch, initial, capture bool) error {
+	return f.record(img, pipe, width, height, initial, capture, instances, uploads, batches, nil)
+}
+
+func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial, capture bool, instances []Instance, uploads []text.Upload, batches []Batch, rect *Rect) (err error) {
+	if width <= 0 || height <= 0 || pipe == nil {
+		return fmt.Errorf("invalid render dimensions or pipeline")
+	}
+	ready, err := f.Ready()
+	if err != nil || !ready {
+		return fmt.Errorf("command buffer still in use: ready=%v err=%v", ready, err)
+	}
+	f.settleImages()
+	if f.submitted {
+		if err = vulkan.Check(f.device.Dispatch.ResetFences(f.device.Logical, 1, &f.Done)); err != nil {
+			return err
+		}
+		if err = vulkan.Check(f.device.Dispatch.ResetCommandBuffer(f.Commands, 0)); err != nil {
+			return err
+		}
+		f.Signal.Close()
+		f.Signal, err = f.device.NewBinaryFence(true)
+		if err != nil {
+			return err
+		}
+		f.submitted = false
+	}
+	if rect == nil && f.device.atlas == nil {
+		return fmt.Errorf("list atlas not initialized")
+	}
+	if rect == nil {
+		if err := f.stageGlyphs(uploads); err != nil {
+			return err
+		}
+	}
+	if rect == nil && f.device.images != nil {
+		defer func() {
+			if err != nil {
+				f.device.images.abort(f)
+			}
+		}()
+		batches, err = f.device.images.resolve(f, batches)
+		if err != nil {
+			return err
+		}
+	}
+	if rect == nil && len(instances) > 0 {
+		if err := f.uploadInstances(instances); err != nil {
+			return err
+		}
+	}
+	begin := vulkan.CommandBufferBeginInfo{SType: vulkan.StructureTypeCommandBufferBeginInfo, Flags: vulkan.CommandBufferUsageOneTimeSubmitBit}
+	d := f.device.Dispatch
+	if err = vulkan.Check(d.BeginCommandBuffer(f.Commands, &begin)); err != nil {
+		return err
+	}
+	f.atlasRecorded = rect == nil && !f.device.atlas.initialized
+	if rect == nil {
+		var staging vulkan.Buffer
+		if len(uploads) != 0 {
+			staging = f.glyphStaging.Buffer
+		}
+		f.device.atlas.recordUploads(f.Commands, staging, uploads)
+		if !f.device.images.fallbackReady {
+			f.recordFallback()
+		}
+		f.recordImages()
+	}
+	rangeInfo := vulkan.ImageSubresourceRange{AspectMask: vulkan.ImageAspectColorBit, LevelCount: 1, LayerCount: 1}
+	old := vulkan.ImageLayout(vulkan.ImageLayoutGeneral)
+	if initial {
+		old = vulkan.ImageLayoutUndefined
+	}
+	barrier := vulkan.ImageMemoryBarrier2{SType: vulkan.StructureTypeImageMemoryBarrier2, SrcStageMask: vulkan.PipelineStage2None, DstStageMask: vulkan.PipelineStage2ColorAttachmentOutputBit, DstAccessMask: vulkan.Access2ColorAttachmentWriteBit, OldLayout: old, NewLayout: vulkan.ImageLayoutColorAttachmentOptimal, SrcQueueFamilyIndex: ^uint32(0), DstQueueFamilyIndex: ^uint32(0), Image: img.Image, SubresourceRange: rangeInfo}
+	dependency := vulkan.DependencyInfo{SType: vulkan.StructureTypeDependencyInfo, ImageMemoryBarrierCount: 1, ImageMemoryBarriers: &barrier}
+	d.CmdPipelineBarrier2(f.Commands, &dependency)
+	clear := vulkan.ClearValue{}
+	attachment := vulkan.RenderingAttachmentInfo{SType: vulkan.StructureTypeRenderingAttachmentInfo, ImageView: f.View, ImageLayout: vulkan.ImageLayoutColorAttachmentOptimal, LoadOp: vulkan.AttachmentLoadOpClear, StoreOp: vulkan.AttachmentStoreOpStore, ClearValue: clear}
+	area := vulkan.Rect2D{Extent: vulkan.Extent2D{Width: uint32(width), Height: uint32(height)}}
+	rendering := vulkan.RenderingInfo{SType: vulkan.StructureTypeRenderingInfo, RenderArea: area, LayerCount: 1, ColorAttachmentCount: 1, ColorAttachments: &attachment}
+	d.CmdBeginRendering(f.Commands, &rendering)
+	d.CmdBindPipeline(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Handle)
+	if rect != nil {
+		d.CmdPushConstants(f.Commands, pipe.Layout, vulkan.ShaderStageVertexBit|vulkan.ShaderStageFragmentBit, 0, uint32(unsafe.Sizeof(*rect)), unsafe.Pointer(rect))
+		d.CmdDraw(f.Commands, 6, 1, 0, 0)
+	} else {
+		// The fragment shader statically references both descriptor sets even
+		// for non-image draws. Bind a valid initialized image set before any
+		// draw; each image batch then replaces set 1 in painter's order.
+		sets := [2]vulkan.DescriptorSet{f.device.atlas.Set, f.device.images.fallback.Texture.Set}
+		d.CmdBindDescriptorSets(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Layout, 0, 2, &sets[0], 0, nil)
+		screen := [2]float32{float32(width), float32(height)}
+		d.CmdPushConstants(f.Commands, pipe.Layout, vulkan.ShaderStageVertexBit|vulkan.ShaderStageFragmentBit, 0, 8, unsafe.Pointer(&screen))
+		if len(instances) > 0 {
+			offset := vulkan.DeviceSize(0)
+			d.CmdBindVertexBuffers(f.Commands, 0, 1, &f.instances.Buffer, &offset)
+			for _, batch := range batches {
+				if batch.Count == 0 || uint64(batch.First)+uint64(batch.Count) > uint64(len(instances)) {
+					return fmt.Errorf("invalid list batch range")
+				}
+				if batch.Source != nil {
+					if batch.Texture == nil {
+						return fmt.Errorf("image batch has no GPU texture")
+					}
+					d.CmdBindDescriptorSets(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Layout, 1, 1, &batch.Texture.Set, 0, nil)
+				}
+				d.CmdDraw(f.Commands, 6, batch.Count, 0, batch.First)
+			}
+		}
+	}
+	d.CmdEndRendering(f.Commands)
+	if capture && f.Readback != nil {
+		barrier.SrcStageMask = vulkan.PipelineStage2ColorAttachmentOutputBit
+		barrier.SrcAccessMask = vulkan.Access2ColorAttachmentWriteBit
+		barrier.DstStageMask = vulkan.PipelineStage2TransferBit
+		barrier.DstAccessMask = vulkan.Access2TransferReadBit
+		barrier.OldLayout = vulkan.ImageLayoutColorAttachmentOptimal
+		barrier.NewLayout = vulkan.ImageLayoutTransferSrcOptimal
+		d.CmdPipelineBarrier2(f.Commands, &dependency)
+		f.Readback.record(f.Commands, img.Image)
+		barrier.SrcStageMask = vulkan.PipelineStage2TransferBit
+		barrier.SrcAccessMask = vulkan.Access2TransferReadBit
+		barrier.OldLayout = vulkan.ImageLayoutTransferSrcOptimal
+	} else {
+		barrier.SrcStageMask = vulkan.PipelineStage2ColorAttachmentOutputBit
+		barrier.SrcAccessMask = vulkan.Access2ColorAttachmentWriteBit
+		barrier.OldLayout = vulkan.ImageLayoutColorAttachmentOptimal
+	}
+	barrier.DstStageMask = vulkan.PipelineStage2AllCommandsBit
+	barrier.DstAccessMask = vulkan.Access2MemoryReadBit
+	barrier.NewLayout = vulkan.ImageLayoutGeneral
+	d.CmdPipelineBarrier2(f.Commands, &dependency)
+	return vulkan.Check(d.EndCommandBuffer(f.Commands))
+}
+
+// Submit has no CPU wait: the next render waits on a temporarily imported
+// release SYNC_FD, and the compositor waits on the exported acquire SYNC_FD.
+func (f *Frame) Submit(wait *BinaryFence) error {
+	cmd := vulkan.CommandBufferSubmitInfo{SType: vulkan.StructureTypeCommandBufferSubmitInfo, CommandBuffer: f.Commands}
+	signal := vulkan.SemaphoreSubmitInfo{SType: vulkan.StructureTypeSemaphoreSubmitInfo, Semaphore: f.Signal.Semaphore, StageMask: vulkan.PipelineStage2AllCommandsBit}
+	info := vulkan.SubmitInfo2{SType: vulkan.StructureTypeSubmitInfo2, CommandBufferInfoCount: 1, CommandBufferInfos: &cmd, SignalSemaphoreInfoCount: 1, SignalSemaphoreInfos: &signal}
+	if wait != nil {
+		waiting := vulkan.SemaphoreSubmitInfo{SType: vulkan.StructureTypeSemaphoreSubmitInfo, Semaphore: wait.Semaphore, StageMask: vulkan.PipelineStage2AllCommandsBit}
+		info.WaitSemaphoreInfoCount = 1
+		info.WaitSemaphoreInfos = &waiting
+	}
+	if err := vulkan.Check(f.device.Dispatch.QueueSubmit2(f.device.Queue, 1, &info, f.Done)); err != nil {
+		// Only this recording's unsubmitted image state is released; a
+		// previous submission's serial was completed by record.
+		if f.device.images != nil && f.imageSerial != 0 {
+			f.device.images.abort(f)
+		}
+		return err
+	}
+	f.submitted = true
+	if f.device.images != nil && f.imageSerial != 0 {
+		f.device.images.inflight[f] = struct{}{}
+	}
+	if f.atlasRecorded {
+		f.device.atlas.initialized = true
+	}
+	if f.fallbackRecorded {
+		f.device.images.fallbackReady = true
+	}
+	return nil
+}
+
+// settleImages runs once the frame is Ready. A submitted frame's serial is
+// completed and its upload list forgotten, so a later failed submission can
+// never abort textures that submitted work used. A recorded but unsubmitted
+// frame is aborted: nothing on the GPU references its new textures.
+func (f *Frame) settleImages() {
+	if f.device.images == nil || f.imageSerial == 0 {
+		return
+	}
+	if f.submitted {
+		delete(f.device.images.inflight, f)
+		f.device.images.complete(f.imageSerial)
+		f.imageSerial = 0
+		f.imageCopies = f.imageCopies[:0]
+		return
+	}
+	f.device.images.abort(f)
+}
+
+func (f *Frame) Wait() error {
+	if !f.submitted {
+		return nil
+	}
+	return vulkan.Check(f.device.Dispatch.WaitForFences(f.device.Logical, 1, &f.Done, 1, math.MaxUint64))
+}
+func (f *Frame) Close() {
+	if f == nil || f.device == nil {
+		return
+	}
+	_ = f.Wait()
+	d := f.device.Dispatch
+	if f.Signal != nil {
+		f.Signal.Close()
+		f.Signal = nil
+	}
+	if f.Done != 0 {
+		d.DestroyFence(f.device.Logical, f.Done, nil)
+		f.Done = 0
+	}
+	if f.View != 0 {
+		d.DestroyImageView(f.device.Logical, f.View, nil)
+		f.View = 0
+	}
+	if f.Pool != 0 {
+		d.DestroyCommandPool(f.device.Logical, f.Pool, nil)
+		f.Pool = 0
+	}
+	if f.instances != nil {
+		f.instances.Close()
+		f.instances = nil
+	}
+	if f.glyphStaging != nil {
+		f.glyphStaging.Close()
+		f.glyphStaging = nil
+	}
+	if f.imageStaging != nil {
+		f.imageStaging.Close()
+		f.imageStaging = nil
+	}
+	// After Wait: complete submitted work, abort a recorded-but-unsubmitted list.
+	f.settleImages()
+	if f.Readback != nil {
+		f.Readback.Close()
+		f.Readback = nil
+	}
+}

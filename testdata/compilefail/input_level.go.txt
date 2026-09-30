@@ -1,0 +1,3 @@
+package invalid
+import "github.com/bnema/nefergui"
+func bad(n nefergui.Node, s *string) { n.Input("bad", s, nefergui.Level(1)) }

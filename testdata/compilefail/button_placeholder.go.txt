@@ -1,0 +1,3 @@
+package invalid
+import "github.com/bnema/nefergui"
+func bad(n nefergui.Node) { n.Button("bad", nefergui.Placeholder("not a button option")) }

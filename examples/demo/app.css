@@ -1,0 +1,19 @@
+app.app { background-color: #f5f7fa; color: #18253b; padding: 20px; }
+header.header { background-color: #dae5f5; padding: 14px; height: 130px; }
+heading.logo { color: #203d7a; font-size: 32px; }
+nav.menu { display: flex; flex-direction: row; column-gap: 8px; padding: 8px; }
+button.menu-item { background-color: #aabbd8; padding: 6px 12px; }
+button.menu-item:hover { background-color: #bccae2; }
+button.menu-item.active { background-color: #8fa6cf; }
+main.content { padding: 24px; }
+section.welcome { background-color: #ffffff; padding: 20px; }
+heading { color: #203d7a; font-size: 28px; }
+input { background-color: #f1f5fc; border: 2px solid #5675a4; padding: 8px; width: 300px; height: 42px; }
+row.actions { padding: 12px; }
+button.primary { background-color: #2357bb; color: #ffffff; padding: 13px 10px; width: 160px; }
+button.primary:hover { background-color: #1b4699; }
+button.primary:disabled { background-color: #7594c9; }
+input:hover { border-color: #203d7a; }
+radio { padding-top: 6px; padding-bottom: 6px; }
+slider { width: 300px; margin-top: 12px; }
+footer.status-bar { background-color: #dae5f5; padding: 12px; height: 42px; }

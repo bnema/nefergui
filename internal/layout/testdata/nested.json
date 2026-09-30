@@ -1,0 +1,266 @@
+{
+  "Tree": {
+    "ID": "root",
+    "Kind": "box",
+    "Border": {
+      "X": 0,
+      "Y": 0,
+      "W": 200,
+      "H": 38
+    },
+    "Content": {
+      "X": 6,
+      "Y": 6,
+      "W": 188,
+      "H": 26
+    },
+    "Clip": {
+      "X": 0,
+      "Y": 0,
+      "W": 0,
+      "H": 0
+    },
+    "Margin": {
+      "Top": 0,
+      "Right": 0,
+      "Bottom": 0,
+      "Left": 0
+    },
+    "Padding": {
+      "Top": 4,
+      "Right": 4,
+      "Bottom": 4,
+      "Left": 4
+    },
+    "BorderWidths": {
+      "Top": 2,
+      "Right": 2,
+      "Bottom": 2,
+      "Left": 2
+    },
+    "ContentSize": {
+      "W": 100,
+      "H": 26
+    },
+    "ScrollX": 0,
+    "ScrollY": 0,
+    "Children": [
+      {
+        "ID": "pic",
+        "Kind": "image",
+        "Border": {
+          "X": 9,
+          "Y": 9,
+          "W": 94,
+          "H": 20
+        },
+        "Content": {
+          "X": 9,
+          "Y": 9,
+          "W": 94,
+          "H": 20
+        },
+        "Clip": {
+          "X": 0,
+          "Y": 0,
+          "W": 0,
+          "H": 0
+        },
+        "Margin": {
+          "Top": 3,
+          "Right": 3,
+          "Bottom": 3,
+          "Left": 3
+        },
+        "Padding": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "BorderWidths": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "ContentSize": {
+          "W": 0,
+          "H": 0
+        },
+        "ScrollX": 0,
+        "ScrollY": 0,
+        "Children": null,
+        "Clipped": false
+      }
+    ],
+    "Clipped": false
+  },
+  "Display": [
+    {
+      "Op": "rect",
+      "ID": "root",
+      "Rect": {
+        "X": 0,
+        "Y": 0,
+        "W": 200,
+        "H": 38
+      },
+      "Color": {
+        "R": 0,
+        "G": 0,
+        "B": 1,
+        "A": 1
+      },
+      "Opacity": 1,
+      "Widths": {
+        "Top": 0,
+        "Right": 0,
+        "Bottom": 0,
+        "Left": 0
+      },
+      "Colors": {
+        "Top": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Right": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Bottom": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Left": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        }
+      },
+      "Radii": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "Op": "border",
+      "ID": "root",
+      "Rect": {
+        "X": 0,
+        "Y": 0,
+        "W": 200,
+        "H": 38
+      },
+      "Color": {
+        "R": 1,
+        "G": 0,
+        "B": 0,
+        "A": 1
+      },
+      "Opacity": 1,
+      "Widths": {
+        "Top": 2,
+        "Right": 2,
+        "Bottom": 2,
+        "Left": 2
+      },
+      "Colors": {
+        "Top": {
+          "R": 1,
+          "G": 0,
+          "B": 0,
+          "A": 1
+        },
+        "Right": {
+          "R": 1,
+          "G": 0,
+          "B": 0,
+          "A": 1
+        },
+        "Bottom": {
+          "R": 1,
+          "G": 0,
+          "B": 0,
+          "A": 1
+        },
+        "Left": {
+          "R": 1,
+          "G": 0,
+          "B": 0,
+          "A": 1
+        }
+      },
+      "Radii": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "Op": "image",
+      "ID": "pic",
+      "Rect": {
+        "X": 9,
+        "Y": 9,
+        "W": 94,
+        "H": 20
+      },
+      "Color": {
+        "R": 0,
+        "G": 0,
+        "B": 0,
+        "A": 0
+      },
+      "Opacity": 1,
+      "Widths": {
+        "Top": 0,
+        "Right": 0,
+        "Bottom": 0,
+        "Left": 0
+      },
+      "Colors": {
+        "Top": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Right": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Bottom": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        },
+        "Left": {
+          "R": 0,
+          "G": 0,
+          "B": 0,
+          "A": 0
+        }
+      },
+      "Radii": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

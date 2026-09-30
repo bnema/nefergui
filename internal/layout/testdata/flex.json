@@ -1,0 +1,196 @@
+{
+  "Tree": {
+    "ID": "r",
+    "Kind": "row",
+    "Border": {
+      "X": 0,
+      "Y": 0,
+      "W": 120,
+      "H": 24
+    },
+    "Content": {
+      "X": 0,
+      "Y": 0,
+      "W": 120,
+      "H": 24
+    },
+    "Clip": {
+      "X": 0,
+      "Y": 0,
+      "W": 0,
+      "H": 0
+    },
+    "Margin": {
+      "Top": 0,
+      "Right": 0,
+      "Bottom": 0,
+      "Left": 0
+    },
+    "Padding": {
+      "Top": 0,
+      "Right": 0,
+      "Bottom": 0,
+      "Left": 0
+    },
+    "BorderWidths": {
+      "Top": 0,
+      "Right": 0,
+      "Bottom": 0,
+      "Left": 0
+    },
+    "ContentSize": {
+      "W": 120,
+      "H": 24
+    },
+    "ScrollX": 0,
+    "ScrollY": 0,
+    "Children": [
+      {
+        "ID": "a",
+        "Kind": "box",
+        "Border": {
+          "X": 0,
+          "Y": 0,
+          "W": 55,
+          "H": 12
+        },
+        "Content": {
+          "X": 0,
+          "Y": 0,
+          "W": 55,
+          "H": 12
+        },
+        "Clip": {
+          "X": 0,
+          "Y": 0,
+          "W": 0,
+          "H": 0
+        },
+        "Margin": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "Padding": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "BorderWidths": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "ContentSize": {
+          "W": 0,
+          "H": 0
+        },
+        "ScrollX": 0,
+        "ScrollY": 0,
+        "Children": null,
+        "Clipped": false
+      },
+      {
+        "ID": "b",
+        "Kind": "box",
+        "Border": {
+          "X": 65,
+          "Y": 0,
+          "W": 55,
+          "H": 12
+        },
+        "Content": {
+          "X": 65,
+          "Y": 0,
+          "W": 55,
+          "H": 12
+        },
+        "Clip": {
+          "X": 0,
+          "Y": 0,
+          "W": 0,
+          "H": 0
+        },
+        "Margin": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "Padding": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "BorderWidths": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "ContentSize": {
+          "W": 0,
+          "H": 0
+        },
+        "ScrollX": 0,
+        "ScrollY": 0,
+        "Children": null,
+        "Clipped": false
+      },
+      {
+        "ID": "c",
+        "Kind": "box",
+        "Border": {
+          "X": 0,
+          "Y": 12,
+          "W": 120,
+          "H": 12
+        },
+        "Content": {
+          "X": 0,
+          "Y": 12,
+          "W": 120,
+          "H": 12
+        },
+        "Clip": {
+          "X": 0,
+          "Y": 0,
+          "W": 0,
+          "H": 0
+        },
+        "Margin": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "Padding": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "BorderWidths": {
+          "Top": 0,
+          "Right": 0,
+          "Bottom": 0,
+          "Left": 0
+        },
+        "ContentSize": {
+          "W": 0,
+          "H": 0
+        },
+        "ScrollX": 0,
+        "ScrollY": 0,
+        "Children": null,
+        "Clipped": false
+      }
+    ],
+    "Clipped": false
+  },
+  "Display": null
+}
