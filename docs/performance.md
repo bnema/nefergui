@@ -68,7 +68,7 @@ An external Go module with minimal-counter and demo views, a 960×640 window at 
 | Process RSS / PSS after 1,000 frames | 65 / 42 MiB | 59 / 40 MiB |
 | Baseline process RSS / PSS after 1,000 frames | 63 / 40 MiB | 60 / 41 MiB |
 | GPU VRAM / GTT with three buffers, current and baseline | 41 / 4 MiB | 41 / 4 MiB |
-| Temporary allocations per rendered frame | about 36 KiB | about 136 KiB |
+| Temporary allocations per rendered frame | about 35.5 KiB | about 136 KiB |
 | Baseline temporary allocations per rendered frame | about 61 KiB | about 238 KiB |
 
 Heap/RSS/PSS use the default Go profiling rate. Allocation figures use separate `GODEBUG=memprofilerate=1` runs: subtract cumulative profiles at frames 1 and 1,000, exclude stacks containing the measurement sampler or `runtime/pprof`, sum the remaining flat allocated bytes, then divide by 999 frames. These runs recorded about **41–43% less allocation churn** than the baseline. They do not demonstrate an equivalent reduction in RSS or frame latency. Single-run process-memory values vary with runtime and driver behavior.
