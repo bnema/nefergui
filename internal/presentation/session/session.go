@@ -76,6 +76,7 @@ type Session struct {
 	waitCancel        context.CancelFunc
 	waiters           sync.WaitGroup
 	releases          chan releaseEvent
+	wake              chan<- struct{} // optional: pinged after a release is queued
 }
 
 type retiredPipelines struct {
@@ -164,6 +165,17 @@ func OpenWithOptions(ctx context.Context, name string, width, height int32, tran
 	w, err := wayland.ConnectWithOptions(ctx, name, width, height, transparent, opts)
 	if err != nil {
 		return nil, err
+	}
+	return OpenWindow(w, transparent)
+}
+
+// OpenWindow builds the Vulkan/DMA-BUF/explicit-sync path for a window that is
+// already configured and has completed dmabuf feedback (a Connection sibling).
+// On error the window is closed. The session owns w from here on.
+func OpenWindow(w *wayland.Window, transparent bool) (_ *Session, err error) {
+	if !w.Configured || !w.FeedbackDone {
+		_ = w.Close()
+		return nil, errors.New("session: window is not configured with complete dmabuf feedback")
 	}
 	s := &Session{Window: w, Transparent: transparent, Slots: make(map[uint64]*Slot)}
 	if dir := os.Getenv("NEFERGUI_DEBUG_DIR"); dir != "" {
@@ -526,6 +538,12 @@ func (s *Session) startReleaseWait(slot *Slot, point uint64) {
 			if err != nil || ready {
 				select {
 				case s.releases <- releaseEvent{id: id, point: point, err: err}:
+					if s.wake != nil {
+						select {
+						case s.wake <- struct{}{}:
+						default:
+						}
+					}
 				case <-ctx.Done():
 				}
 				return
@@ -808,8 +826,12 @@ func (s *Session) Close() (err error) {
 		}()
 	}
 	if s.Window != nil && s.Window.Surface != nil {
-		_ = s.Window.Surface.Attach(nil, 0, 0)
-		_ = s.Window.Surface.Commit()
+		// A null-buffer commit is a protocol error on an ext-session-lock
+		// surface; its destruction hides it instead.
+		if !s.Window.IsLock() {
+			_ = s.Window.Surface.Attach(nil, 0, 0)
+			_ = s.Window.Surface.Commit()
+		}
 		_ = s.Window.DestroySyncSurface()
 	}
 	// Drain detach/release points for tracing, not for freeing allocations. The
@@ -831,7 +853,7 @@ func (s *Session) Close() (err error) {
 			select {
 			case ev := <-s.releases:
 				_ = s.release(ev)
-			case ev := <-s.Window.Events():
+			case ev := <-s.Window.ReaderEvents(): // nil on a shared connection
 				if ev.Kind == wayland.BufferRelease {
 					if slot := s.Slots[ev.BufferID]; slot != nil {
 						_ = s.Pool.Release(slot.Buffer)

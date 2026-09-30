@@ -1,11 +1,3 @@
-github.com/bnema/purego v0.13.0-bnema.1 h1:fKRdztnvTmRqAjANMoN+utEIH73dvPqVPJh2iZCCAO8=
-github.com/bnema/purego v0.13.0-bnema.1/go.mod h1:xS1iX3noypxnbOUEUAqOvkfnUzgHuu19VtL4+dfUMJM=
-github.com/bnema/purego-vulkan v0.6.0 h1:SJgu0smuDC2vtBv0dJ6dmRKewJW5EUXQwTXyb/p9JSE=
-github.com/bnema/purego-vulkan v0.6.0/go.mod h1:7kFoR1p01JbknuZlfA20oeImryBe8Fx+Zd9hm2uSUM4=
-github.com/bnema/purego-xkbcommon v0.0.0-20260928071113-e79265dfcdc2 h1:XePqfzZzlT1WEQ8G9atwlXjW5jFZAkEoUGnlYvsHAHg=
-github.com/bnema/purego-xkbcommon v0.0.0-20260928071113-e79265dfcdc2/go.mod h1:GE8JGmR/rqdklz96tFaFU7M5kI7jN1ma5mh+rz+XXrg=
-github.com/bnema/wlturbo v0.3.0 h1:Xt5HoiTL/pTVnUjD29mzBsUAVJp+1bxB9DfzxZK6RVA=
-github.com/bnema/wlturbo v0.3.0/go.mod h1:4i1k1wyw7FDWOkh2hg1ZwPfrPRn3+E6WrYg9Qrt74CA=
 github.com/go-text/typesetting v0.3.5 h1:XZPUooClHY0Vf/rFyUyuPRNEkawARaFzLMQcXLSEyPk=
 github.com/go-text/typesetting v0.3.5/go.mod h1:XZO1hD+nQVyvVa5IicQk7FsCa4PFQaJ2soWAP1f//68=
 github.com/go-text/typesetting-utils v0.0.0-20260419141703-4ffe8874dabc h1:8FGo2It5K75XkavhTiCKExUfVaVDS1feBnLCru5qeoY=

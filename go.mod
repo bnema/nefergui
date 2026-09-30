@@ -13,3 +13,11 @@ require (
 )
 
 require golang.org/x/text v0.42.0 // indirect
+
+replace github.com/bnema/wlturbo => ../../../wlturbo/.worktrees/session-lock
+
+replace github.com/bnema/purego-xkbcommon => ../../../purego-xkbcommon/.worktrees/secret-bytes
+
+replace github.com/bnema/purego => ../../../purego
+
+replace github.com/bnema/purego-vulkan => ../../../purego-vulkan

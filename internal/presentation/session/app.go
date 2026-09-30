@@ -62,7 +62,7 @@ func (s *Session) RunApp(ctx context.Context, app AppHooks) error {
 				}
 			}
 		}
-		committed, err := sched.Step(s.Window.FrameReady, app.Draw, func(prepared render.Frame) (bool, error) {
+		committed, err := sched.Step(s.Window.Ready(), app.Draw, func(prepared render.Frame) (bool, error) {
 			return s.tickFrame(prepared)
 		})
 		if err != nil {
@@ -77,7 +77,7 @@ func (s *Session) RunApp(ctx context.Context, app AppHooks) error {
 			continue
 		}
 		var retry, repeat <-chan time.Time
-		if sched.NeedsRetry(pending || s.framePending, s.Window.FrameReady) {
+		if sched.NeedsRetry(pending || s.framePending, s.Window.Ready()) {
 			retry = time.After(retryInterval)
 		}
 		if adapter := s.Window.InputAdapter(); adapter != nil {

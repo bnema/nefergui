@@ -176,3 +176,29 @@ func Run[T any](ctx context.Context, model *T, view func(*Frame, *T), options ..
 func RunFrames[T any](ctx context.Context, frames int, model *T, view func(*Frame, *T), committed func(uint64) error, options ...WindowOption) error {
 	return ui.RunFrames(ctx, frames, model, view, committed, options...)
 }
+
+// Session lock. RunLock acquires ext-session-lock, covers every output with
+// opaque black through the normal Vulkan/DMA-BUF/explicit-sync path and hosts
+// the caller's view on one output. See docs/session-lock.md.
+type (
+	LockConfig   = ui.LockConfig
+	LockState    = ui.LockState
+	LockStatus   = ui.LockStatus
+	SecretBuffer = ui.SecretBuffer
+)
+
+const (
+	LockIdle   = ui.LockIdle
+	LockBusy   = ui.LockBusy
+	LockFailed = ui.LockFailed
+)
+
+// ErrLockFinished reports that the compositor refused or ended the lock.
+var ErrLockFinished = ui.ErrLockFinished
+
+// NewSecretBuffer allocates a caller-owned secret input buffer (1..4096 bytes).
+func NewSecretBuffer(capacity int) *SecretBuffer { return ui.NewSecretBuffer(capacity) }
+
+// RunLock runs a session lock until an unlock requested on LockConfig.Unlock,
+// a failure, or cancellation. It never unlocks on failure or cancellation.
+func RunLock(ctx context.Context, cfg LockConfig) error { return ui.RunLock(ctx, cfg) }

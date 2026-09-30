@@ -150,8 +150,8 @@ func (r seatRemoved) HandleRegistryGlobalRemove(e wl.RegistryGlobalRemoveEvent) 
 func (w *Window) ApplySeat(ev Event) error {
 	switch ev.Kind {
 	case SeatRemoved:
-		if w.WLKeyboard != nil {
-			w.post(Event{Kind: InputFocusOut})
+		if w.WLKeyboard != nil && w.connection == nil {
+			w.ownerFocusOut()
 		}
 		return w.releaseSeat()
 	case SeatCapabilities:
@@ -166,7 +166,13 @@ func (w *Window) ApplySeat(ev Event) error {
 		if ev.Capabilities&2 == 0 && w.WLKeyboard != nil {
 			w.releaseDevice(w.WLKeyboard)
 			w.WLKeyboard = nil
-			w.post(Event{Kind: InputFocusOut})
+			if w.keymapCache != nil {
+				w.keymapCache.close()
+				w.keymapCache = nil
+			}
+			if w.connection == nil {
+				w.ownerFocusOut()
+			}
 		}
 		if ev.Capabilities&1 != 0 && w.Pointer == nil {
 			p, err := w.Seat.GetPointer()
@@ -201,7 +207,38 @@ func (w *Window) releaseDevice(p interface {
 		c.Unregister(p)
 	}
 }
+
+// TakeInputEvents transfers lock-only raw input ownership, including keymap
+// FDs. The secret owner must close each FD after consuming it. No Text/Key
+// translation occurs here; ordinary windows continue to use Inputs().
+func (w *Window) TakeInputEvents() []Event {
+	events := w.rawInput
+	w.rawInput = nil
+	return events
+}
+
+func (w *Window) ownerFocusOut() {
+	if w.LockSurface != nil {
+		for _, ev := range w.rawInput {
+			CloseEventFD(ev)
+		}
+		clear(w.rawInput)
+		w.rawInput = append(w.rawInput[:0], Event{Kind: InputFocusOut, Window: w})
+		return
+	}
+	if w.inputAdapter != nil {
+		w.inputAdapter.Keyboard.Focus(false)
+		w.inputAdapter.focused = false
+		w.inputAdapter.serial = 0
+	}
+	w.queueInput([]Input{{Kind: "focus-out"}})
+}
+
 func (w *Window) releaseSeat() error {
+	if w.keymapCache != nil {
+		w.keymapCache.close()
+		w.keymapCache = nil
+	}
 	if w.Pointer != nil {
 		w.dropCursorDevice()
 		w.releaseDevice(w.Pointer)
@@ -222,6 +259,10 @@ func (w *Window) releaseSeat() error {
 	return nil
 }
 func (w *Window) watchPointer(p *core.Pointer) {
+	if w.connection != nil {
+		w.watchSharedPointer(p)
+		return
+	}
 	var frame []Input // only accessed by the reader
 	var x, y float64
 	var inside bool
@@ -300,6 +341,10 @@ func (w *Window) watchPointer(p *core.Pointer) {
 	p.OnFrame(flush)
 }
 func (w *Window) watchKeyboard(k *core.Keyboard) {
+	if w.connection != nil {
+		w.watchSharedKeyboard(k)
+		return
+	}
 	surfaceID := w.Surface.ID()
 	k.OnKeymap(func(format uint32, fd *wl.OwnedFD, size uint32) {
 		n, err := fd.Take()

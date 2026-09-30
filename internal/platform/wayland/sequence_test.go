@@ -60,7 +60,7 @@ func TestPresentWireSequence(t *testing.T) {
 		p.SetID(uint32(20 + i))
 		ctx.Register(p)
 	}
-	w := &Window{Surface: surface, SyncSurface: syncSurface, Width: 40, Height: 30, Scale: 1, Configured: true, FrameReady: true, Transparent: true}
+	w := &Window{Surface: surface, SyncSurface: syncSurface, Width: 40, Height: 30, Scale: 1, Configured: true, FeedbackDone: true, FrameReady: true, Transparent: true}
 	p, _ := buffers.New(1)
 	// The fake server receives a finite number of requests; no dispatch loop/GPU.
 	for frame := 0; frame < 2; frame++ {

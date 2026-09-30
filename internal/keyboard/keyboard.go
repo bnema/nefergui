@@ -24,6 +24,8 @@ type Keyboard struct {
 	state          *xkb.State
 	compose        *xkb.ComposeState
 	held           map[uint32]Key
+	secretHeld     map[uint32]SecretKey
+	secretMode     bool
 	rate           int
 	delay          time.Duration
 	next           time.Time
@@ -120,7 +122,10 @@ func (k *Keyboard) Mask(depressed, latched, locked, groupDepressed, groupLatched
 func (k *Keyboard) Focus(on bool) {
 	k.focus = on
 	k.held = make(map[uint32]Key)
+	clear(k.secretHeld)
+	k.secretMode = false
 	k.repeating = 0
+	k.next = time.Time{}
 	if k.compose != nil {
 		k.compose.Reset()
 	}
@@ -134,6 +139,9 @@ func (k *Keyboard) RepeatInfo(rate int, delay time.Duration) {
 	}
 }
 func (k *Keyboard) Event(evdev uint32, pressed bool, now time.Time) (Key, error) {
+	if k.secretMode {
+		k.Focus(k.focus)
+	}
 	if !pressed {
 		key := k.held[evdev]
 		delete(k.held, evdev)
@@ -210,7 +218,7 @@ func repeatable(sym uint32) bool {
 // Compose is fed only by physical presses: synthetic repeats neither advance a
 // compose sequence nor replay the press-time composed text.
 func (k *Keyboard) Tick(now time.Time) (Key, bool) {
-	if !k.focus || k.rate <= 0 || k.repeating == 0 || now.Before(k.next) {
+	if k.secretMode || !k.focus || k.rate <= 0 || k.repeating == 0 || now.Before(k.next) {
 		return Key{}, false
 	}
 	physical := k.repeating
