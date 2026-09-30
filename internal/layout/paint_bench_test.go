@@ -53,7 +53,11 @@ func BenchmarkPaint(b *testing.B) {
 
 func BenchmarkLayoutPaintTree(b *testing.B) {
 	root, opts := paintFixture(b, 100)
+	if _, err := Layout(root, opts); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := Layout(root, opts); err != nil {
 			b.Fatal(err)

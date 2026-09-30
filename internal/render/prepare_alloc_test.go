@@ -119,7 +119,7 @@ func TestPrepareQuadAllocationsDoNotScaleWithCommands(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if allocs > 3 {
+	if allocs > 2 {
 		t.Fatalf("%v allocs for 512 rects, want a small constant", allocs)
 	}
 }

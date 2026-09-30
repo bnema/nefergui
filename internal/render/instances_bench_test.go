@@ -31,6 +31,7 @@ func listFixture(n int) Frame {
 func BenchmarkListBatches(b *testing.B) {
 	frame := listFixture(2000)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		instances, batches, stats := ListBatches(frame)
 		if len(instances) != 2000 || len(batches) == 0 || len(stats.Skipped) != 0 {
@@ -42,7 +43,10 @@ func BenchmarkListBatches(b *testing.B) {
 func BenchmarkListBufferReuse(b *testing.B) {
 	frame := listFixture(2000)
 	var buf ListBuffer
+	buf.List(frame)
+	buf.Release()
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		instances, batches, stats := buf.List(frame)
 		if len(instances) != 2000 || len(batches) == 0 || len(stats.Skipped) != 0 {
