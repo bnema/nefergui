@@ -544,6 +544,28 @@ func TestDirectionalTextAlignment(t *testing.T) {
 	}
 }
 
+func TestFlexStackRejectsRect(t *testing.T) {
+	for _, direction := range []css.Keyword{css.KeywordRow, css.KeywordColumn} {
+		for _, nested := range []bool{false, true} {
+			child := node("rect", Box, css.Style{Display: css.KeywordBlock})
+			child.Rect, child.HasRect = Rect{X: 10, Y: 20, W: 30, H: 40}, true
+			stack := node("stack", Stack, css.Style{Display: css.KeywordFlex, FlexDirection: direction}, child)
+			root := stack
+			if nested {
+				root = node("root", Row, css.Style{Display: css.KeywordFlex}, stack)
+			}
+			if _, err := Layout(root, Options{Width: 200, Height: 100}); err == nil || err.Error() != "layout: Rect is unsupported in a flex-styled Stack" {
+				t.Fatalf("direction=%v nested=%v: err=%v", direction, nested, err)
+			}
+			// Hidden children do not participate in layout or validation.
+			child.Style.Display = css.KeywordNone
+			if _, err := Layout(root, Options{Width: 200, Height: 100}); err != nil {
+				t.Fatalf("hidden Rect: %v", err)
+			}
+		}
+	}
+}
+
 func TestStackAbsoluteRect(t *testing.T) {
 	margin := css.Style{Display: css.KeywordBlock, Margin: css.LengthSides{Top: px(7), Left: px(9)}, Width: px(500), Height: px(500)}
 	a := node("a", Box, margin)
