@@ -333,8 +333,7 @@ func (w *Window) createLayerSurface(o LayerOptions) error {
 			return
 		}
 		if w.readerStarted.Load() {
-			w.post(Event{Kind: ConfigureLayer, Width: cw, Height: ch})
-			w.post(Event{Kind: ConfigureSerial, Serial: serial})
+			w.post(Event{Kind: ConfigureLayer, Width: cw, Height: ch, Serial: serial})
 			return
 		}
 		w.applyLayerSize(cw, ch)

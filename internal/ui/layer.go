@@ -45,8 +45,12 @@ const (
 type Rect struct{ X, Y, Width, Height int32 }
 
 // LayerConfig requests a wlr-layer-shell surface instead of an xdg toplevel.
-// Size still gives the initial logical size; an anchored axis is sized by the
-// compositor and reported through OnResize and Frame.Size.
+// Size still gives the initial logical size; an axis anchored to both opposite
+// edges is sized by the compositor and reported through OnResize and Frame.Size.
+// ExclusiveZone > 0 asks the compositor to reserve that many logical pixels
+// from an anchored edge (only for one edge, or one edge plus both perpendicular
+// edges); 0 reserves nothing and asks to avoid other surfaces' positive zones;
+// -1 ignores other exclusive zones and extends to the anchored output edges.
 type LayerConfig struct {
 	Output        string // output name; empty lets the compositor choose
 	Namespace     string // defaults to "nefergui"

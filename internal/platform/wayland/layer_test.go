@@ -75,6 +75,111 @@ func TestLayerConfigureSizeBounds(t *testing.T) {
 	}
 }
 
+// A post-startup configure must carry size and serial together, even when the
+// previous frame is ready. Applying it must ack before the owner can commit.
+func TestLayerConfigureAfterReaderStart(t *testing.T) {
+	srv, accept := newWireServer(t)
+	type dialed struct {
+		d   *wlturbo.Display
+		err error
+	}
+	ch := make(chan dialed, 1)
+	go func() {
+		d, err := wlturbo.Connect(srv.path)
+		ch <- dialed{d, err}
+	}()
+	conn := accept()
+	r := <-ch
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	d := r.d
+	defer d.Close()
+	comp := core.NewCompositor(d.Context())
+	if err := d.Registry().Bind(1, core.CompositorInterface, 6, comp); err != nil {
+		t.Fatal(err)
+	}
+	surface, err := comp.CreateSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &Window{Display: d, Compositor: comp, Surface: surface, Width: 100, Height: 40,
+		Configured: true, FrameReady: true, events: make(chan Event, 8), readerStop: make(chan struct{})}
+	if err := w.bindLayerShell(func(iface string, max, min uint32, p wl.Proxy) error {
+		return d.Registry().Bind(2, iface, max, p)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.createLayerSurface(LayerOptions{Layer: LayerTop}); err != nil {
+		t.Fatal(err)
+	}
+	w.StartReader()
+	defer func() {
+		close(w.readerStop)
+		_ = d.Close()
+		<-w.readerDone
+	}()
+	for _, tc := range []struct {
+		serial, width, height uint32
+		wantW, wantH          int32
+		ready                 bool
+	}{{7, 200, 50, 200, 50, true}, {8, 0, 60, 200, 60, false}} {
+		w.FrameReady, w.Dirty = tc.ready, false
+		if _, err := conn.Write(frame(w.LayerSurface.ID(), 0, tc.serial, tc.width, tc.height)); err != nil {
+			t.Fatal(err)
+		}
+		var ev Event
+		select {
+		case ev = <-w.Events():
+		case <-time.After(5 * time.Second):
+			t.Fatal("no configure event")
+		}
+		if ev.Kind != ConfigureLayer || ev.Width != int32(tc.width) || ev.Height != int32(tc.height) || ev.Serial != tc.serial {
+			t.Fatalf("configure must be one size+serial event: %+v", ev)
+		}
+		if err := w.Apply(ev); err != nil {
+			t.Fatal(err)
+		}
+		if w.Width != tc.wantW || w.Height != tc.wantH || !w.Dirty || !w.Configured || !w.FrameReady {
+			t.Fatalf("configure state: size=%dx%d dirty=%v configured=%v ready=%v", w.Width, w.Height, w.Dirty, w.Configured, w.FrameReady)
+		}
+		if err := surface.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		// Ignore setup requests, but require exactly one ack of this configure
+		// before the first subsequent surface commit.
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		acks := 0
+		for {
+			var hdr [8]byte
+			if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+				t.Fatal(err)
+			}
+			obj, word := binary.NativeEndian.Uint32(hdr[:]), binary.NativeEndian.Uint32(hdr[4:])
+			size, op := int(word>>16), uint16(word)
+			if size < 8 {
+				t.Fatalf("bad frame size %d", size)
+			}
+			args := make([]byte, size-8)
+			if _, err := io.ReadFull(conn, args); err != nil {
+				t.Fatal(err)
+			}
+			if obj == w.LayerSurface.ID() && op == 6 {
+				if len(args) != 4 || binary.NativeEndian.Uint32(args) != tc.serial {
+					t.Fatalf("wrong ack payload %x, want serial %d", args, tc.serial)
+				}
+				acks++
+			}
+			if obj == surface.ID() && op == 6 {
+				if acks != 1 {
+					t.Fatalf("commit preceded by %d configure acks, want 1", acks)
+				}
+				break
+			}
+		}
+	}
+}
+
 // Harness acceptance: a real NeferWL compositor and the real client code.
 func runLayerHarness(t *testing.T, child string) (string, string) {
 	t.Helper()
