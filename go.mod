@@ -1,6 +1,6 @@
 module github.com/bnema/nefergui
 
-go 1.27.0
+go 1.27
 
 require (
 	github.com/bnema/purego v0.13.0-bnema.1
