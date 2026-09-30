@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -22,6 +21,7 @@ import (
 	"github.com/bnema/wlturbo/protocol/core"
 	"github.com/bnema/wlturbo/protocol/cursorshape"
 	"github.com/bnema/wlturbo/protocol/drmsyncobj"
+	"github.com/bnema/wlturbo/protocol/extsessionlock"
 	"github.com/bnema/wlturbo/protocol/fractionalscale"
 	"github.com/bnema/wlturbo/protocol/linuxdmabuf"
 	"github.com/bnema/wlturbo/protocol/viewporter"
@@ -48,6 +48,9 @@ const (
 )
 
 type Window struct {
+	connection                *Connection
+	ownsConnection            bool
+	LockSurface               *extsessionlock.ExtSessionLockSurface
 	Display                   *wl.Display
 	Compositor                *core.Compositor
 	Shell                     *xdgshell.XdgWmBase
@@ -70,6 +73,7 @@ type Window struct {
 	cursor                    cursorState
 	pointerGen                uint64 // bumped per wl_pointer; session loop only
 	WLKeyboard                *core.Keyboard
+	keymapCache               *keyboardMapCache // owner retires each keyboard generation
 	seatName, seatVersion     uint32
 	Width, Height             int32
 	Scale                     float64
@@ -77,6 +81,7 @@ type Window struct {
 	Transparent               bool
 	FrameReady                bool
 	// Feedback fields are populated by the default feedback event stream.
+	FeedbackDone  bool // owner has applied the complete feedback round
 	MainDevice    uint64
 	Formats       []linuxdmabuf.FormatEntry
 	Tranches      [][]linuxdmabuf.FormatEntry
@@ -86,12 +91,14 @@ type Window struct {
 	readerStop    chan struct{}
 	readerOnce    sync.Once
 	readerStarted atomic.Bool
+	rawInput      []Event // lock-only numeric protocol events, never ordinary text
 	inputAdapter  *InputAdapter
 	inputQueue    []InputEvent
 	// inputRects/inputCustom record the current input region; session loop only.
 	inputRects          []Rect
 	inputCustom         bool
 	layerOutputGlobal   uint32
+	lockOutput          uint32
 	layerOutputSelected bool
 	// InputOverflow counts events discarded when the 4096-event queue fills.
 	InputOverflow uint64
@@ -129,7 +136,33 @@ func waylandSocketPath(name string) (string, error) {
 // (dial, registry, configure, dmabuf feedback) is abandoned with ctx: the
 // connection is closed and the returned error wraps ctx.Err(). Once it
 // returns successfully, ctx no longer affects the window.
-func ConnectWithOptions(ctx context.Context, name string, width, height int32, transparent bool, opts SurfaceOptions) (res *Window, err error) {
+func ConnectWithOptions(ctx context.Context, name string, width, height int32, transparent bool, opts SurfaceOptions) (*Window, error) {
+	if ctx == nil {
+		return nil, errors.New("nil context")
+	}
+	if width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("invalid logical size %dx%d", width, height)
+	}
+	if err := opts.Validate(); err != nil {
+		return nil, err
+	}
+	c, err := ConnectConnection(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	w, err := c.NewWindow(ctx, width, height, transparent, opts)
+	if err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+	w.ownsConnection = true
+	return w, nil
+}
+
+// NewWindow creates a sibling on this connection. Before StartReader it waits
+// for initial configure/feedback; afterwards it returns unconfigured and the
+// owner must Apply tagged events before allocating/presenting buffers.
+func (c *Connection) NewWindow(ctx context.Context, width, height int32, transparent bool, opts SurfaceOptions) (res *Window, err error) {
 	if ctx == nil {
 		return nil, errors.New("nil context")
 	}
@@ -142,22 +175,27 @@ func ConnectWithOptions(ctx context.Context, name string, width, height int32, t
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
-	path, err := waylandSocketPath(name)
-	if err != nil {
-		return nil, err
+	if c.closed {
+		return nil, errors.New("connection closed")
 	}
-	dialer := net.Dialer{Timeout: dialTimeout}
-	conn, err := dialer.DialContext(ctx, "unix", path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Wayland: %w", err)
+	if opts.Lock != nil && (transparent || opts.Layer != nil || opts.InputRects != nil) {
+		return nil, errors.New("lock role requires opaque full-input surface")
 	}
-	d, err := wlturbo.ConnectFromConn(conn)
-	if err != nil {
-		return nil, err
+	if opts.Lock != nil && !c.started.Load() {
+		// A lock that was already refused or ended must not get surfaces; its
+		// lock and output events are held for the owner, not applied here.
+		if err = c.drainStartup(true); err != nil {
+			return nil, err
+		}
 	}
+	// Objects created below get their handlers after their request is sent;
+	// a running reader must not dispatch their first events in between.
+	defer c.pauseReader()()
+	d := c.Display
 	// Closing the display unblocks any pending read; Display.Close is idempotent.
 	stopWatch := context.AfterFunc(ctx, func() { _ = d.Close() })
-	w := &Window{events: make(chan Event, 128), readerStop: make(chan struct{}), Display: d, Width: width, Height: height, Scale: 1, Transparent: transparent}
+	w := &Window{connection: c, events: c.events, readerStop: c.stop, Display: d, Width: width, Height: height, Scale: 1, Transparent: transparent}
+	w.readerStarted.Store(c.started.Load())
 	defer func() {
 		if !stopWatch() && err == nil {
 			// Cancelled after the last step but before return: the watcher owns a
@@ -172,9 +210,6 @@ func ConnectWithOptions(ctx context.Context, name string, width, height int32, t
 			res = nil
 		}
 	}()
-	if err = d.Roundtrip(); err != nil {
-		return nil, err
-	}
 	wctx := d.Context()
 	bind := func(name string, supported, minimum uint32, proxy wl.Proxy) error {
 		advertised, ok := d.Registry().FindGlobal(name)
@@ -198,7 +233,7 @@ func ConnectWithOptions(ctx context.Context, name string, width, height int32, t
 		if err = w.bindLayerShell(bind); err != nil {
 			return nil, err
 		}
-	} else {
+	} else if opts.Lock == nil {
 		w.Shell = xdgshell.NewXdgWmBase(wctx)
 		if err = bind(xdgshell.XdgWmBaseInterface, 6, 1, w.Shell); err != nil {
 			return nil, err
@@ -236,9 +271,11 @@ func ConnectWithOptions(ctx context.Context, name string, width, height int32, t
 		wctx.Unregister(w.CursorShapes)
 		w.CursorShapes = nil
 	}
-	if err = w.BindSeat(); err != nil {
-		return nil, err
-	}
+	w.Seat, w.Pointer, w.WLKeyboard = c.seat.Seat, c.seat.Pointer, c.seat.WLKeyboard
+	if opts.Lock != nil {
+		w.Seat = nil
+	} // clipboard/IME constructors require Seat
+	w.pointerGen = c.seat.pointerGen
 	if w.Shell != nil {
 		w.Shell.OnPing(func(serial uint32) {
 			if e := w.Shell.Pong(serial); e != nil {
@@ -290,7 +327,13 @@ func ConnectWithOptions(ctx context.Context, name string, width, height int32, t
 			w.Dirty = true
 		}
 	})
-	if opts.Layer != nil {
+	c.windows[w.Surface.ID()] = w
+	c.routes.Store(w.Surface.ID(), w)
+	if opts.Lock != nil {
+		if err = w.createLockSurface(*opts.Lock); err != nil {
+			return nil, err
+		}
+	} else if opts.Layer != nil {
 		if err = w.createLayerSurface(*opts.Layer); err != nil {
 			return nil, err
 		}
@@ -311,14 +354,27 @@ func ConnectWithOptions(ctx context.Context, name string, width, height int32, t
 		return nil, err
 	}
 	w.watchFeedback()
-	if err = w.Surface.Commit(); err != nil {
-		return nil, err
-	} // no buffer before configure
-	for !w.Configured || w.MainDevice == 0 || len(w.Tranches) == 0 {
+	// ext-session-lock configure is sent by get_lock_surface; unlike xdg and
+	// layer-shell it forbids the initial empty commit before ACK+buffer.
+	if opts.Lock == nil {
+		if err = w.Surface.Commit(); err != nil {
+			return nil, err
+		}
+	}
+	if c.started.Load() {
+		return w, nil
+	}
+	for !w.Configured || !w.FeedbackDone || w.MainDevice == 0 || len(w.Tranches) == 0 {
 		if w.Closed {
 			return nil, fmt.Errorf("window closed before initial configure and feedback")
 		}
+		if err = c.drainStartup(true); err != nil {
+			return nil, err // a finished already queued: do not wait for a configure
+		}
 		if err = w.Dispatch(); err != nil {
+			return nil, err
+		}
+		if err = c.drainStartup(true); err != nil {
 			return nil, err
 		}
 	}
@@ -366,6 +422,9 @@ func (w *Window) createToplevel() error {
 }
 
 func (w *Window) Dispatch() error {
+	if w.connection != nil && w.connection.started.Load() {
+		return errors.New("connection reader already started")
+	}
 	if w.feedbackErr != nil {
 		return w.feedbackErr
 	}
@@ -374,6 +433,14 @@ func (w *Window) Dispatch() error {
 	}
 	return w.feedbackErr
 }
+
+// Ready reports that a buffer may be allocated and attached: the role's
+// configure was acknowledged, the dmabuf feedback round is complete and the
+// previous frame callback has fired.
+func (w *Window) Ready() bool { return w.Configured && w.FeedbackDone && w.FrameReady }
+
+// IsLock reports whether the window is an ext-session-lock surface.
+func (w *Window) IsLock() bool { return w != nil && w.LockSurface != nil }
 
 func (w *Window) PhysicalSize() (int32, int32, error) {
 	if w.Scale <= 0 || w.Width <= 0 || w.Height <= 0 {
@@ -395,6 +462,9 @@ func (w *Window) PhysicalSize() (int32, int32, error) {
 func (w *Window) Present(buffer *core.Buffer, acquire, release *drmsyncobj.WpLinuxDrmSyncobjTimeline, acquirePoint, releasePoint uint64) error {
 	if !w.Configured || buffer == nil || acquire == nil || release == nil {
 		return fmt.Errorf("unconfigured surface or missing buffer/timeline")
+	}
+	if !w.FeedbackDone {
+		return fmt.Errorf("dmabuf feedback incomplete")
 	}
 	if !w.FrameReady {
 		return fmt.Errorf("frame callback pending")
@@ -478,15 +548,24 @@ func (w *Window) Close() error {
 	if w == nil {
 		return nil
 	}
+	if w.ownsConnection && w.connection != nil && !w.connection.closed {
+		return w.connection.Close()
+	}
+	for _, ev := range w.rawInput {
+		CloseEventFD(ev)
+	}
+	clear(w.rawInput)
+	w.rawInput = nil
 	// The loop sends protocol destructors before Close; the reader is
 	// unblocked by the connection close at the end of this method.
 	if w.inputAdapter != nil {
 		w.inputAdapter.Close()
 		w.inputAdapter = nil
 	}
-	if w.Seat != nil {
+	if w.Seat != nil && w.connection == nil {
 		_ = w.releaseSeat()
 	}
+	w.dropCursorDevice()
 	if w.CursorShapes != nil {
 		_ = w.CursorShapes.Destroy()
 		w.CursorShapes = nil
@@ -498,6 +577,14 @@ func (w *Window) Close() error {
 	if w.SyncSurface != nil {
 		_ = w.SyncSurface.Destroy()
 		w.SyncSurface = nil
+	}
+	if w.connection != nil && w.Surface != nil {
+		delete(w.connection.windows, w.Surface.ID())
+		w.connection.routes.Delete(w.Surface.ID())
+	}
+	if w.LockSurface != nil {
+		_ = w.LockSurface.Destroy()
+		w.LockSurface = nil
 	}
 	w.closeLayer() // before wl_surface
 	if w.Toplevel != nil {
@@ -547,6 +634,14 @@ func (w *Window) Close() error {
 			c.Unregister(w.Compositor)
 		}
 		w.Compositor = nil
+	}
+	if w.connection != nil {
+		w.Display = nil
+		w.Closed = true
+		if w.ownsConnection {
+			return w.connection.Close()
+		}
+		return nil
 	}
 	if w.Display != nil {
 		if w.readerDone != nil {
@@ -609,8 +704,10 @@ func (w *Window) watchFeedback() {
 	w.Feedback.OnDone(func() {
 		if w.readerStarted.Load() {
 			w.post(Event{Kind: FeedbackFormats, Formats: table})
+			w.post(Event{Kind: FeedbackComplete})
 		} else {
 			w.Formats = table
+			w.FeedbackDone = true
 		}
 	})
 }

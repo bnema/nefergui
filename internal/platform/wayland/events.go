@@ -33,14 +33,26 @@ const (
 	FeedbackMainDevice
 	FeedbackTranche
 	FeedbackFormats
+	FeedbackComplete
 	ClipboardInput
 	IMEInput
 	// ConfigureLayer carries a layer-surface extent and its configure serial;
 	// Apply resizes and acks together. Zero axes are unchanged.
 	ConfigureLayer
+	ConfigureLock
+	OutputGlobal
+	OutputNamed
+	OutputScale
+	OutputAdded
+	OutputRemoved
+	LockAcquired
+	LockFinished
 )
 
 type Event struct {
+	Window                           *Window // tagged by transport, applied only by the shared UI owner
+	Output                           Output
+	Version                          uint32
 	Kind                             EventKind
 	Width, Height                    int32
 	Serial, Scale                    uint32
@@ -62,6 +74,9 @@ type Event struct {
 // StartReader launches exactly one blocking Wayland reader. Registered callbacks
 // only send typed values to Events; Apply is called by the session loop alone.
 func (w *Window) StartReader() <-chan Event {
+	if w.connection != nil {
+		return w.connection.StartReader()
+	}
 	w.readerOnce.Do(func() {
 		w.readerStarted.Store(true)
 		w.readerDone = make(chan struct{})
@@ -86,11 +101,28 @@ func (w *Window) StartReader() <-chan Event {
 // Events exposes the reader's typed event queue to the session owner.
 func (w *Window) Events() <-chan Event { return w.events }
 
+// ReaderEvents is the queue a closing session may drain. It is nil for a window
+// on a Connection it does not own: that queue carries other windows' events,
+// the lock state and transport errors, and belongs to the connection owner.
+func (w *Window) ReaderEvents() <-chan Event {
+	if w.connection != nil && !w.ownsConnection {
+		return nil
+	}
+	return w.events
+}
+
 // PostClipboard and PostIME enqueue transport callbacks for the owner loop.
 func (w *Window) PostClipboard(ev ClipboardEvent) { w.post(Event{Kind: ClipboardInput, Clipboard: ev}) }
 func (w *Window) PostIME(ev IMEEvent)             { w.post(Event{Kind: IMEInput, IME: ev}) }
 
 func (w *Window) post(ev Event) {
+	if w.connection != nil {
+		if w != w.connection.seat {
+			ev.Window = w
+		}
+		w.connection.post(ev)
+		return
+	}
 	select {
 	case <-w.readerStop:
 		return
@@ -100,6 +132,10 @@ func (w *Window) post(ev Event) {
 
 // postFD closes an undeliverable keymap descriptor rather than leaking it.
 func (w *Window) postFD(ev Event) {
+	if w.connection != nil {
+		w.post(ev)
+		return
+	}
 	select {
 	case <-w.readerStop:
 		CloseEventFD(ev)
@@ -113,6 +149,13 @@ func (w *Window) BufferReleased(id uint64) {
 	w.post(Event{Kind: BufferRelease, BufferID: id})
 }
 func (w *Window) Apply(ev Event) error {
+	if w.connection != nil && (ev.Window == nil || ev.Window != w) {
+		return w.connection.Apply(ev)
+	}
+	if w.Closed {
+		CloseEventFD(ev)
+		return nil
+	}
 	switch ev.Kind {
 	case ConfigureSize:
 		if ev.Width > 0 && ev.Height > 0 && (w.Width != ev.Width || w.Height != ev.Height) {
@@ -129,6 +172,15 @@ func (w *Window) Apply(ev Event) error {
 			return err
 		}
 		w.Configured, w.FrameReady = true, true
+	case ConfigureLock:
+		if w.LockSurface == nil || ev.Width <= 0 || ev.Height <= 0 || ev.Width > 16384 || ev.Height > 16384 {
+			return fmt.Errorf("invalid lock configure %dx%d", ev.Width, ev.Height)
+		}
+		if err := w.LockSurface.AckConfigure(ev.Serial); err != nil {
+			return err
+		}
+		w.Width, w.Height = ev.Width, ev.Height
+		w.Configured, w.FrameReady, w.Dirty = true, true, true
 	case ConfigureLayer:
 		w.applyLayerSize(ev.Width, ev.Height)
 		if w.LayerSurface == nil {
@@ -164,16 +216,37 @@ func (w *Window) Apply(ev Event) error {
 		}
 		return ev.Err
 	case FeedbackMainDevice:
+		if w.FeedbackDone { // a new feedback round replaces the previous one
+			w.FeedbackDone, w.Tranches, w.Formats = false, nil, nil
+		}
 		w.MainDevice = ev.Device
 	case FeedbackTranche:
 		w.Tranches = append(w.Tranches, ev.Tranche)
 	case FeedbackFormats:
 		w.Formats = ev.Formats
+	case FeedbackComplete:
+		if w.feedbackErr != nil {
+			return w.feedbackErr
+		}
+		w.FeedbackDone = true
 	case SeatCapabilities, SeatRemoved:
 		return w.ApplySeat(ev)
 	case ClipboardInput, IMEInput:
 		// These are applied by the session owner after Window.Apply.
 	case InputFrame, InputKeymap, InputFocusIn, InputFocusOut, InputKey, InputModifiers, InputRepeatInfo:
+		if w.LockSurface != nil {
+			if ev.Kind == InputFrame {
+				return nil // pointer input has no consumer on a lock surface
+			}
+			// Lock owners consume numeric/raw protocol events through their
+			// secret keyboard path. Never instantiate the ordinary translator.
+			if len(w.rawInput) >= 4096 {
+				CloseEventFD(ev)
+				return fmt.Errorf("lock raw input queue full")
+			}
+			w.rawInput = append(w.rawInput, ev)
+			return nil
+		}
 		if w.inputAdapter == nil {
 			var err error
 			w.inputAdapter, err = NewInputAdapter("")

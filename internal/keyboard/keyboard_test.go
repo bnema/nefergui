@@ -1,11 +1,13 @@
 package keyboard
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/bnema/purego-xkbcommon/raw"
+	"golang.org/x/sys/unix"
 )
 
 func TestLayoutsAndRepeat(t *testing.T) {
@@ -102,14 +104,22 @@ func TestKeymapFDReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close()
 	if _, err = f.WriteString("bad keymap"); err != nil {
 		t.Fatal(err)
 	}
-	if err = k.ReplaceFD(int(f.Fd()), len("bad keymap")); err == nil {
+	// Only transfer a raw duplicate. The original os.File remains its sole
+	// owner's responsibility, so its finalizer cannot close a reused FD.
+	fd, err := unix.Dup(int(f.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = k.ReplaceFD(fd, len("bad keymap")); err == nil {
 		t.Fatal("bad keymap accepted")
 	}
-	if _, err = f.Stat(); err == nil {
-		t.Fatal("keymap FD not closed")
+	var stat unix.Stat_t
+	if err = unix.Fstat(fd, &stat); !errors.Is(err, unix.EBADF) {
+		t.Fatalf("keymap duplicate not consumed: %v", err)
 	}
 	if err = k.ReplaceFD(-1, 0); err == nil {
 		t.Fatal("invalid fd accepted")
@@ -141,14 +151,20 @@ func TestValidFDReplacementCancelsRepeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer file.Close()
 	if _, err = file.Write(append(data, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err = k.ReplaceFD(int(file.Fd()), len(data)+1); err != nil {
+	fd, err := unix.Dup(int(file.Fd()))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = file.Stat(); err == nil {
-		t.Fatal("FD not consumed")
+	if err = k.ReplaceFD(fd, len(data)+1); err != nil {
+		t.Fatal(err)
+	}
+	var stat unix.Stat_t
+	if err = unix.Fstat(fd, &stat); !errors.Is(err, unix.EBADF) {
+		t.Fatalf("keymap duplicate not consumed: %v", err)
 	}
 	if _, ok := k.Tick(now.Add(time.Second)); ok {
 		t.Fatal("repeat survived keymap replacement")

@@ -82,6 +82,9 @@ type LayerOptions struct {
 type SurfaceOptions struct {
 	// Layer, when non-nil, creates a layer surface and binds no xdg shell.
 	Layer *LayerOptions
+	// Lock selects a private output lifetime on this Connection's sole lock.
+	// It is incompatible with Layer, transparency and custom input regions.
+	Lock *LockOptions
 	// InputRects is the initial input region in surface-local logical pixels.
 	// nil means the whole surface (the protocol default); a non-nil empty slice
 	// means no input (pointer and touch pass through).
@@ -90,6 +93,9 @@ type SurfaceOptions struct {
 
 // Validate reports the first invalid option.
 func (o SurfaceOptions) Validate() error {
+	if o.Lock != nil && (o.Layer != nil || o.InputRects != nil) {
+		return errors.New("lock role cannot have layer or custom input")
+	}
 	if o.Layer != nil {
 		if err := o.Layer.Validate(); err != nil {
 			return err
@@ -246,6 +252,14 @@ func releaseOutputs(cands []*outputCandidate, keep *outputCandidate) {
 // selectOutput binds every wl_output that can report a name and returns the
 // global name of the exact match. Unmatched outputs are released.
 func (w *Window) selectOutput(name string) (*core.Output, uint32, error) {
+	if w.connection != nil {
+		for _, out := range w.connection.outputs {
+			if out.Name == name {
+				return out.proxy, out.Global, nil
+			}
+		}
+		return nil, 0, &CapabilityError{Name: core.OutputInterface, Cause: fmt.Errorf("output %q not found in applied inventory", name)}
+	}
 	reg := w.Display.Registry()
 	var globals []wl.Global
 	legacy := 0 // outputs older than v4 cannot report a name
@@ -317,8 +331,9 @@ func (w *Window) createLayerSurface(o LayerOptions) error {
 		ns = DefaultLayerNamespace
 	}
 	ls, err := w.LayerShell.GetLayerSurface(w.Surface, out, o.Layer, ns)
-	if out != nil {
-		// The compositor keeps its own reference to the output.
+	if out != nil && w.connection == nil {
+		// The compositor keeps its own reference to the output. A shared
+		// connection owns the proxy in its output inventory instead.
 		_ = out.Release()
 	}
 	if err != nil {

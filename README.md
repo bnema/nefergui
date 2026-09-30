@@ -57,6 +57,7 @@ CGO_ENABLED=0 go run ./examples/demo
 - [CSS properties and limitations](docs/css.md)
 - [Runtime requirements and behavior](docs/runtime.md) and [troubleshooting](docs/troubleshooting.md)
 - [Visual test harness](docs/harness.md) and [performance](docs/performance.md)
+- [Session lock client](docs/session-lock.md)
 - [Architecture decisions](docs/adr)
 
 ## License
