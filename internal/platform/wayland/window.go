@@ -116,7 +116,7 @@ func Connect(name string, width, height int32, transparent bool) (_ *Window, err
 		return nil
 	}
 	w.Compositor = core.NewCompositor(ctx)
-	if err = bind(core.CompositorInterface, 6, 1, w.Compositor); err != nil {
+	if err = bind(core.CompositorInterface, 6, 4, w.Compositor); err != nil {
 		return nil, err
 	}
 	w.Shell = xdgshell.NewXdgWmBase(ctx)
