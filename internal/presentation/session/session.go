@@ -152,8 +152,16 @@ func (s *Session) traceState(b *buffers.Buffer, event string) {
 	}{time.Now(), s.frame, b.ID, b.Generation, b.State, event, b.AcquirePoint, b.ReleasePoint, b.WlReleased, b.PointSignaled})
 }
 
-func Open(name string, width, height int32, transparent bool) (_ *Session, err error) {
-	w, err := wayland.Connect(name, width, height, transparent)
+// Open opens a default xdg-toplevel session.
+func Open(name string, width, height int32, transparent bool) (*Session, error) {
+	return OpenWithOptions(context.Background(), name, width, height, transparent, wayland.SurfaceOptions{})
+}
+
+// OpenWithOptions opens a session whose surface role and initial input region
+// are selected by opts; the zero value is identical to Open. Wayland startup
+// is abandoned when ctx is cancelled; ctx is not retained after it returns.
+func OpenWithOptions(ctx context.Context, name string, width, height int32, transparent bool, opts wayland.SurfaceOptions) (_ *Session, err error) {
+	w, err := wayland.ConnectWithOptions(ctx, name, width, height, transparent, opts)
 	if err != nil {
 		return nil, err
 	}

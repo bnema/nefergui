@@ -6,12 +6,17 @@
 package wayland
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
+	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bnema/wlturbo"
 	"github.com/bnema/wlturbo/protocol/core"
@@ -22,6 +27,8 @@ import (
 	"github.com/bnema/wlturbo/protocol/viewporter"
 	"github.com/bnema/wlturbo/protocol/xdgshell"
 	"github.com/bnema/wlturbo/wl"
+
+	"github.com/bnema/nefergui/internal/platform/wayland/layershell"
 )
 
 // CapabilityError reports a missing or insufficient required protocol.
@@ -46,6 +53,8 @@ type Window struct {
 	Shell                     *xdgshell.XdgWmBase
 	Dmabuf                    *linuxdmabuf.LinuxDmabuf
 	SyncManager               *drmsyncobj.WpLinuxDrmSyncobjManager
+	LayerShell                *layershell.LayerShell   // nil for xdg windows
+	LayerSurface              *layershell.LayerSurface // nil for xdg windows
 	Surface                   *core.Surface
 	XdgSurface                *xdgshell.XdgSurface
 	Toplevel                  *xdgshell.XdgToplevel
@@ -79,28 +88,94 @@ type Window struct {
 	readerStarted atomic.Bool
 	inputAdapter  *InputAdapter
 	inputQueue    []InputEvent
+	// inputRects/inputCustom record the current input region; session loop only.
+	inputRects          []Rect
+	inputCustom         bool
+	layerOutputGlobal   uint32
+	layerOutputSelected bool
 	// InputOverflow counts events discarded when the 4096-event queue fills.
 	InputOverflow uint64
 }
 
-func Connect(name string, width, height int32, transparent bool) (_ *Window, err error) {
+// Connect opens a default xdg-toplevel window with full-surface input. It
+// cannot be cancelled; use ConnectWithOptions for a cancellable startup.
+func Connect(name string, width, height int32, transparent bool) (*Window, error) {
+	return ConnectWithOptions(context.Background(), name, width, height, transparent, SurfaceOptions{})
+}
+
+// dialTimeout bounds the unix-socket dial; a local dial is normally instant.
+const dialTimeout = 5 * time.Second
+
+// waylandSocketPath resolves name like wlturbo.Connect does.
+func waylandSocketPath(name string) (string, error) {
+	if name == "" {
+		name = os.Getenv("WAYLAND_DISPLAY")
+		if name == "" {
+			name = "wayland-0"
+		}
+	}
+	if filepath.IsAbs(name) {
+		return name, nil
+	}
+	runDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runDir == "" {
+		return "", errors.New("XDG_RUNTIME_DIR not set")
+	}
+	return filepath.Join(runDir, name), nil
+}
+
+// ConnectWithOptions opens a window whose role and initial input region are
+// selected by opts. The zero SurfaceOptions is identical to Connect. Startup
+// (dial, registry, configure, dmabuf feedback) is abandoned with ctx: the
+// connection is closed and the returned error wraps ctx.Err(). Once it
+// returns successfully, ctx no longer affects the window.
+func ConnectWithOptions(ctx context.Context, name string, width, height int32, transparent bool, opts SurfaceOptions) (res *Window, err error) {
+	if ctx == nil {
+		return nil, errors.New("nil context")
+	}
 	if width <= 0 || height <= 0 {
 		return nil, fmt.Errorf("invalid logical size %dx%d", width, height)
 	}
-	d, err := wl.Connect(name)
+	if err = opts.Validate(); err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	path, err := waylandSocketPath(name)
 	if err != nil {
 		return nil, err
 	}
+	dialer := net.Dialer{Timeout: dialTimeout}
+	conn, err := dialer.DialContext(ctx, "unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Wayland: %w", err)
+	}
+	d, err := wlturbo.ConnectFromConn(conn)
+	if err != nil {
+		return nil, err
+	}
+	// Closing the display unblocks any pending read; Display.Close is idempotent.
+	stopWatch := context.AfterFunc(ctx, func() { _ = d.Close() })
 	w := &Window{events: make(chan Event, 128), readerStop: make(chan struct{}), Display: d, Width: width, Height: height, Scale: 1, Transparent: transparent}
 	defer func() {
+		if !stopWatch() && err == nil {
+			// Cancelled after the last step but before return: the watcher owns a
+			// closed display, so the window is unusable.
+			err = ctx.Err()
+		}
 		if err != nil {
+			if cerr := ctx.Err(); cerr != nil && !errors.Is(err, cerr) {
+				err = errors.Join(cerr, err)
+			}
 			_ = w.Close()
+			res = nil
 		}
 	}()
 	if err = d.Roundtrip(); err != nil {
 		return nil, err
 	}
-	ctx := d.Context()
+	wctx := d.Context()
 	bind := func(name string, supported, minimum uint32, proxy wl.Proxy) error {
 		advertised, ok := d.Registry().FindGlobal(name)
 		if !ok || advertised.Version < minimum {
@@ -115,54 +190,62 @@ func Connect(name string, width, height int32, transparent bool) (_ *Window, err
 		}
 		return nil
 	}
-	w.Compositor = core.NewCompositor(ctx)
+	w.Compositor = core.NewCompositor(wctx)
 	if err = bind(core.CompositorInterface, 6, 4, w.Compositor); err != nil {
 		return nil, err
 	}
-	w.Shell = xdgshell.NewXdgWmBase(ctx)
-	if err = bind(xdgshell.XdgWmBaseInterface, 6, 1, w.Shell); err != nil {
-		return nil, err
+	if opts.Layer != nil {
+		if err = w.bindLayerShell(bind); err != nil {
+			return nil, err
+		}
+	} else {
+		w.Shell = xdgshell.NewXdgWmBase(wctx)
+		if err = bind(xdgshell.XdgWmBaseInterface, 6, 1, w.Shell); err != nil {
+			return nil, err
+		}
 	}
-	w.Dmabuf = linuxdmabuf.NewLinuxDmabuf(ctx)
+	w.Dmabuf = linuxdmabuf.NewLinuxDmabuf(wctx)
 	if err = bind(linuxdmabuf.LinuxDmabufInterface, 4, 4, w.Dmabuf); err != nil {
 		return nil, err
 	}
-	w.SyncManager = drmsyncobj.NewWpLinuxDrmSyncobjManager(ctx)
+	w.SyncManager = drmsyncobj.NewWpLinuxDrmSyncobjManager(wctx)
 	if err = bind(drmsyncobj.WpLinuxDrmSyncobjManagerInterface, 1, 1, w.SyncManager); err != nil {
 		return nil, err
 	}
-	w.Viewporter = viewporter.NewWpViewporter(ctx)
+	w.Viewporter = viewporter.NewWpViewporter(wctx)
 	if _, e := d.Registry().BindNegotiated(viewporter.WpViewporterInterface, 1, w.Viewporter); e != nil {
 		if !errors.Is(e, wlturbo.ErrGlobalNotFound) {
 			return nil, e
 		}
-		ctx.Unregister(w.Viewporter)
+		wctx.Unregister(w.Viewporter)
 		w.Viewporter = nil
 	}
-	w.ScaleManager = fractionalscale.NewWpFractionalScaleManager(ctx)
+	w.ScaleManager = fractionalscale.NewWpFractionalScaleManager(wctx)
 	if _, e := d.Registry().BindNegotiated(fractionalscale.WpFractionalScaleManagerInterface, 1, w.ScaleManager); e != nil {
 		if !errors.Is(e, wlturbo.ErrGlobalNotFound) {
 			return nil, e
 		}
-		ctx.Unregister(w.ScaleManager)
+		wctx.Unregister(w.ScaleManager)
 		w.ScaleManager = nil
 	}
-	w.CursorShapes = cursorshape.NewWpCursorShapeManager(ctx)
+	w.CursorShapes = cursorshape.NewWpCursorShapeManager(wctx)
 	if _, e := d.Registry().BindNegotiated(cursorshape.WpCursorShapeManagerInterface, 1, w.CursorShapes); e != nil {
 		if !errors.Is(e, wlturbo.ErrGlobalNotFound) {
 			return nil, e
 		}
-		ctx.Unregister(w.CursorShapes)
+		wctx.Unregister(w.CursorShapes)
 		w.CursorShapes = nil
 	}
 	if err = w.BindSeat(); err != nil {
 		return nil, err
 	}
-	w.Shell.OnPing(func(serial uint32) {
-		if e := w.Shell.Pong(serial); e != nil {
-			w.feedbackFailure(e)
-		}
-	})
+	if w.Shell != nil {
+		w.Shell.OnPing(func(serial uint32) {
+			if e := w.Shell.Pong(serial); e != nil {
+				w.feedbackFailure(e)
+			}
+		})
+	}
 	w.Surface, err = w.Compositor.CreateSurface()
 	if err != nil {
 		return nil, err
@@ -207,13 +290,50 @@ func Connect(name string, width, height int32, transparent bool) (_ *Window, err
 			w.Dirty = true
 		}
 	})
-	w.XdgSurface, err = w.Shell.GetXdgSurface(w.Surface)
+	if opts.Layer != nil {
+		if err = w.createLayerSurface(*opts.Layer); err != nil {
+			return nil, err
+		}
+	} else if err = w.createToplevel(); err != nil {
+		return nil, err
+	}
+	if opts.InputRects != nil {
+		if err = w.SetInputRects(opts.InputRects); err != nil {
+			return nil, err
+		}
+	}
+	w.SyncSurface, err = w.SyncManager.GetSurface(w.Surface)
 	if err != nil {
 		return nil, err
 	}
-	w.Toplevel, err = w.XdgSurface.GetToplevel()
+	w.Feedback, err = w.Dmabuf.GetDefaultFeedback()
 	if err != nil {
 		return nil, err
+	}
+	w.watchFeedback()
+	if err = w.Surface.Commit(); err != nil {
+		return nil, err
+	} // no buffer before configure
+	for !w.Configured || w.MainDevice == 0 || len(w.Tranches) == 0 {
+		if w.Closed {
+			return nil, fmt.Errorf("window closed before initial configure and feedback")
+		}
+		if err = w.Dispatch(); err != nil {
+			return nil, err
+		}
+	}
+	return w, nil
+}
+
+func (w *Window) createToplevel() error {
+	var err error
+	w.XdgSurface, err = w.Shell.GetXdgSurface(w.Surface)
+	if err != nil {
+		return err
+	}
+	w.Toplevel, err = w.XdgSurface.GetToplevel()
+	if err != nil {
+		return err
 	}
 	w.Toplevel.OnClose(func() {
 		if w.readerStarted.Load() {
@@ -242,27 +362,7 @@ func Connect(name string, width, height int32, transparent bool) (_ *Window, err
 		}
 		w.Configured, w.FrameReady = true, true
 	})
-	w.SyncSurface, err = w.SyncManager.GetSurface(w.Surface)
-	if err != nil {
-		return nil, err
-	}
-	w.Feedback, err = w.Dmabuf.GetDefaultFeedback()
-	if err != nil {
-		return nil, err
-	}
-	w.watchFeedback()
-	if err = w.Surface.Commit(); err != nil {
-		return nil, err
-	} // no buffer before configure
-	for !w.Configured || w.MainDevice == 0 || len(w.Tranches) == 0 {
-		if w.Closed {
-			return nil, fmt.Errorf("window closed before initial configure and feedback")
-		}
-		if err = w.Dispatch(); err != nil {
-			return nil, err
-		}
-	}
-	return w, nil
+	return nil
 }
 
 func (w *Window) Dispatch() error {
@@ -399,6 +499,7 @@ func (w *Window) Close() error {
 		_ = w.SyncSurface.Destroy()
 		w.SyncSurface = nil
 	}
+	w.closeLayer() // before wl_surface
 	if w.Toplevel != nil {
 		_ = w.Toplevel.Destroy()
 		w.Toplevel = nil

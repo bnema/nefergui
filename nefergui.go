@@ -103,6 +103,69 @@ func Styles(s string) WindowOption { return ui.Styles(s) }
 // Transparent requests an alpha-capable Wayland surface (opaque by default).
 func Transparent() WindowOption { return ui.Transparent() }
 
+// Layer surface, input and wake configuration. Layer selects a wlr-layer-shell
+// surface instead of an xdg toplevel; OnInput, OnResize and Wake integrate
+// callers that own state outside the view. See internal/ui for details.
+type (
+	LayerConfig  = ui.LayerConfig
+	LayerLevel   = ui.LayerLevel
+	Anchor       = ui.Anchor
+	KeyboardMode = ui.KeyboardMode
+	Rect         = ui.Rect
+	InputEvent   = ui.InputEvent
+	InputKind    = ui.InputKind
+	Modifiers    = ui.Modifiers
+)
+
+const (
+	LayerBackground = ui.LayerBackground
+	LayerBottom     = ui.LayerBottom
+	LayerTop        = ui.LayerTop
+	LayerOverlay    = ui.LayerOverlay
+
+	AnchorTop    = ui.AnchorTop
+	AnchorBottom = ui.AnchorBottom
+	AnchorLeft   = ui.AnchorLeft
+	AnchorRight  = ui.AnchorRight
+
+	KeyboardNone      = ui.KeyboardNone
+	KeyboardExclusive = ui.KeyboardExclusive
+	KeyboardOnDemand  = ui.KeyboardOnDemand
+
+	InputPointerMotion  = ui.InputPointerMotion
+	InputPointerPress   = ui.InputPointerPress
+	InputPointerRelease = ui.InputPointerRelease
+	InputPointerAxis    = ui.InputPointerAxis
+	InputPointerLeave   = ui.InputPointerLeave
+	InputKey            = ui.InputKey
+	InputFocusIn        = ui.InputFocusIn
+	InputFocusOut       = ui.InputFocusOut
+	InputReset          = ui.InputReset
+
+	ModShift = ui.ModShift
+	ModCtrl  = ui.ModCtrl
+)
+
+// Layer makes the window a layer-shell surface.
+func Layer(c LayerConfig) WindowOption { return ui.Layer(c) }
+
+// OnInput receives raw input on the owner loop before control routing; return
+// true to request a redraw.
+func OnInput(fn func(InputEvent) bool) WindowOption { return ui.OnInput(fn) }
+
+// OnResize reports logical size and scale at start and on change only.
+func OnResize(fn func(width, height int, scale float64)) WindowOption { return ui.OnResize(fn) }
+
+// WaylandSurface is the window's Wayland display and wl_surface for OnSurface.
+type WaylandSurface = ui.WaylandSurface
+
+// OnSurface runs fn once after the surface role is configured and before the
+// first buffer; an error aborts Run.
+func OnSurface(fn func(context.Context, WaylandSurface) error) WindowOption { return ui.OnSurface(fn) }
+
+// Wake requests a redraw for each value received on ch.
+func Wake(ch <-chan struct{}) WindowOption { return ui.Wake(ch) }
+
 // Run builds and presents an immediate view on the Wayland session owner loop.
 func Run[T any](ctx context.Context, model *T, view func(*Frame, *T), options ...WindowOption) error {
 	return ui.Run(ctx, model, view, options...)

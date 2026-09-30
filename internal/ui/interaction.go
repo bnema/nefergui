@@ -107,6 +107,7 @@ func (r *runtime) layoutTree(e *element) *layout.Node {
 	if e.computed != nil {
 		n.Style = e.computed.Style
 	}
+	n.Rect, n.HasRect = e.rect, e.hasRect
 	if offset, ok := r.state.scroll[n.ID]; ok {
 		n.ScrollX, n.ScrollY = offset.W, offset.H
 	}

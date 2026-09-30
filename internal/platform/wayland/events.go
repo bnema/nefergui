@@ -35,6 +35,9 @@ const (
 	FeedbackFormats
 	ClipboardInput
 	IMEInput
+	// ConfigureLayer carries a layer-surface extent and its configure serial;
+	// Apply resizes and acks together. Zero axes are unchanged.
+	ConfigureLayer
 )
 
 type Event struct {
@@ -116,7 +119,22 @@ func (w *Window) Apply(ev Event) error {
 			w.Width, w.Height, w.Dirty = ev.Width, ev.Height, true
 		}
 	case ConfigureSerial:
-		if err := w.XdgSurface.AckConfigure(ev.Serial); err != nil {
+		var err error
+		if w.XdgSurface != nil {
+			err = w.XdgSurface.AckConfigure(ev.Serial)
+		} else {
+			err = fmt.Errorf("configure without a shell surface")
+		}
+		if err != nil {
+			return err
+		}
+		w.Configured, w.FrameReady = true, true
+	case ConfigureLayer:
+		w.applyLayerSize(ev.Width, ev.Height)
+		if w.LayerSurface == nil {
+			return fmt.Errorf("configure without a layer surface")
+		}
+		if err := w.LayerSurface.AckConfigure(ev.Serial); err != nil {
 			return err
 		}
 		w.Configured, w.FrameReady = true, true

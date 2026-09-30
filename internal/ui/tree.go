@@ -31,19 +31,20 @@ func (i *identity) same(j *identity) bool {
 
 // Frame is valid only during one call to the view function.
 type Frame struct {
-	generation  uint64
-	active      bool
-	root        *element
-	previous    *element
-	events      []inputEvent
-	styles      *css.Engine
-	edits       map[string]*edit.State
-	clipboard   edit.Clipboard
-	owner       *runtime
-	ime         edit.IME
-	state       interactionState
-	layout      layout.Output
-	diagnostics []string
+	generation    uint64
+	active        bool
+	root          *element
+	previous      *element
+	events        []inputEvent
+	styles        *css.Engine
+	edits         map[string]*edit.State
+	clipboard     edit.Clipboard
+	owner         *runtime
+	ime           edit.IME
+	state         interactionState
+	layout        layout.Output
+	diagnostics   []string
+	width, height float64
 }
 
 // Node is an ephemeral handle into the current frame. Do not retain it between frames.
@@ -71,6 +72,8 @@ type element struct {
 	imageSize     layout.Size
 	image         image.Image
 	level         int
+	rect          layout.Rect // absolute geometry, see Node.Rect
+	hasRect       bool
 }
 
 func (n Node) valid() bool {
@@ -181,3 +184,26 @@ func (n Node) Footer(options ...ContainerOption) Node {
 
 // Diagnostics returns a copy of frame diagnostics (populated with -tags nefergui_debug).
 func (f *Frame) Diagnostics() []string { return append([]string(nil), f.diagnostics...) }
+
+// Size is the logical surface size this frame is laid out against.
+func (f *Frame) Size() (width, height float64) { return f.width, f.height }
+
+// Rect positions the node at x, y with size w, h in logical pixels, relative
+// to the content box of its Stack parent, without CSS parsing or per-frame
+// strings or style copies. The geometry is border-box and overrides authored
+// width, height and margin. Rect is valid only on a direct child of Stack;
+// elsewhere it is ignored, keeping normal flex and block layout, and debug
+// builds (-tags nefergui_debug) report it through Frame.Diagnostics.
+func (n Node) Rect(x, y, w, h float64) Node {
+	if !n.check() {
+		return n
+	}
+	if p := n.element.parent; p == nil || p.typ != "stack" {
+		if debugDiagnostics {
+			n.frame.diagnostics = append(n.frame.diagnostics, "Rect used on a node whose parent is not a Stack")
+		}
+		return n
+	}
+	n.element.rect, n.element.hasRect = layout.Rect{X: x, Y: y, W: w, H: h}, true
+	return n
+}
