@@ -1,5 +1,9 @@
 # Controls
 
+Import `github.com/bnema/nefergui`. Public `Frame`, `Node` and event types alias their implementation types, so `go doc` does not list their methods at the root. Inspect signatures with `go doc github.com/bnema/nefergui/internal/ui.Node` (or `.Frame`, `.ButtonEvent`, `.EditEvent`, `.ChangeEvent`). Applications still use the public package; do not import `internal/ui`.
+
+`ButtonEvent.Activated()` reports activation; `EditEvent.Changed()` and `.Submitted()` report edits and submission; `ChangeEvent.Changed()` reports value changes. These snapshots can be queried repeatedly without consuming an event.
+
 `Text`, `Heading`, `Image`, `Icon`, `Separator`, `Spacer`, `Button`, `Checkbox`, `Radio`, `Slider`, `Input` and `Textarea` build semantic nodes in the immediate frame. `Key` identifies reorderable controls; `ID` and `Class` are CSS metadata. `Image` accepts an existing `image.Image` with bounded intrinsic dimensions. Style is computed via the existing CSS cascade; the caller owns images. CSS types and default accessibility roles are assigned even though a platform accessibility adapter is not yet connected.
 
 `Button`, `Checkbox`, `Radio` and `Slider` paint their label as text in the control's content box, using its font, `color` and `text-align` (buttons center by default).

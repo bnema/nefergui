@@ -6,7 +6,7 @@ AMD Ryzen 9 7900X3D 12-Core Processor; `CGO_ENABLED=0 GOWORK=off go test -run '^
 
 | Package / benchmark | Median ns/op | Median B/op | Median allocs/op | Budget ns/op | Budget B/op | Budget allocs/op |
 |---|---:|---:|---:|---:|---:|---:|
-| root / DemoFrame | 21,238 | 32,816 | 220 | 45,000 | 66,000 | 500 |
+| internal/ui / DemoFrame | 21,238 | 32,816 | 220 | 45,000 | 66,000 | 500 |
 | render / Prepare | 59,024 | 158,720 | 386 | 125,000 | 320,000 | 800 |
 | text / AtlasWarmLookup | 29.07 | 0 | 0 | 60 | 0 | 0 |
 | text / RasterDistinct1000 | 4,139,638 | 8,566,137 | 16,784 | 8,300,000 | 17,200,000 | 34,000 |
@@ -37,13 +37,13 @@ A 400-frame demo harness run (960×640, scale 1, input: name Ada then continue) 
 
 ## Memory as a dependency
 
-An external Go module with a minimal counter view, a 960×640 window, and a private headless NeferWL compositor was profiled on AMD/RADV. Debug readbacks were disabled. Live Go heap was sampled after forced GC; RSS includes shared driver libraries, while PSS apportions shared pages.
+An external Go module with a minimal counter view, a 960×640 window, and a private headless NeferWL compositor was profiled on AMD/RADV. Baseline: NeferGUI `068ba85`, Go 1.27.1, Mesa/RADV 26.2.3, and NeferWL `1d16b83bf90f9e8189ad21b27772382c96b9f9a8`. A minimal-consumer repeat at `84c1f24` matched retained heap within 0.02 MiB and used identical GPU allocations. Debug readbacks were disabled. Live Go heap was sampled after forced GC; RSS includes shared driver libraries, while PSS apportions shared pages.
 
 | Measurement | Minimal view | Demo view |
 |---|---:|---:|
 | Live Go heap after 1,000 frames | 5.3 MiB | 5.4 MiB |
 | Process RSS / PSS after 1,000 frames | 60 / 43 MiB | 64 / 47 MiB |
-| Estimated temporary allocations per rendered frame, sampler excluded | about 65 KiB | about 230 KiB |
+| Estimated temporary allocations per rendered frame, measurement sampler's own allocations excluded | about 65 KiB | about 230 KiB |
 
 The minimal view starts at about 0.75 MiB live Go heap, reaches 5.2 MiB after the first frame, and returns to about 0.9 MiB after closing. No sustained live-heap growth was observed over 1,000–3,000 frames. Driver mappings and Go heap capacity can remain resident after closing; RSS is not a leak measurement on its own.
 
