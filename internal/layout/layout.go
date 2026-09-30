@@ -227,6 +227,13 @@ func boxBound(border float64, minL, maxL css.Length, basis, insets float64, bord
 	return safe(bounded(safe(border-insets), minL, maxL, basis) + insets)
 }
 func (c context) intrinsic(n *Node, w float64) (Size, []text.Line, error) {
+	return c.intrinsicDepth(n, w, 0)
+}
+
+func (c context) intrinsicDepth(n *Node, w float64, depth int) (Size, []text.Line, error) {
+	if depth > 256 {
+		return Size{}, nil, ErrDepth
+	}
 	if n.Measure != nil {
 		s, lines, err := n.Measure(w)
 		if err != nil {
@@ -248,7 +255,13 @@ func (c context) intrinsic(n *Node, w float64) (Size, []text.Line, error) {
 		if req.Size == 0 {
 			req.Size = 16
 		}
-		l, err := c.options.TextEngine.Measure(n.Content, req, w)
+		content := n.Content
+		if content == "" && n.EditorScroll {
+			// Preserve one font-metric line for empty editors, caret geometry
+			// and IME composition without painting a visible glyph.
+			content = " "
+		}
+		l, err := c.options.TextEngine.Measure(content, req, w)
 		if err != nil {
 			return Size{}, nil, err
 		}
@@ -282,7 +295,71 @@ func (c context) intrinsic(n *Node, w float64) (Size, []text.Line, error) {
 		}
 		return Size{safe(l.Width), safe(l.Height)}, l.Lines, nil
 	}
-	return Size{}, nil, nil
+	if depth == 0 {
+		return Size{}, nil, nil
+	}
+	// Containers contribute their children to auto flex sizing. Measuring them
+	// as zero compresses nested columns and makes empty editors collapse.
+	st := style(n)
+	row := st.Display == css.KeywordFlex && st.FlexDirection != css.KeywordColumn
+	gap := positive(st.RowGap, w)
+	if row {
+		gap = positive(st.ColumnGap, w)
+	}
+	var size Size
+	count := 0
+	for _, child := range n.Children {
+		if child == nil || style(child).Display == css.KeywordNone {
+			continue
+		}
+		cs := style(child)
+		inW, inH := flexInsets(cs, w)
+		measured, _, err := c.intrinsicDepth(child, safe(w-inW), depth+1)
+		if err != nil {
+			return Size{}, nil, err
+		}
+		cw, ch := measured.W+inW, measured.H+inH
+		if value, ok := length(cs.Width, w); ok && cs.Width.Unit != "%" {
+			cw = value
+			if cs.BoxSizing != css.KeywordBorderBox {
+				cw += inW
+			}
+		}
+		// Percent heights need a definite containing height, unavailable here.
+		if cs.Height.Unit != "%" {
+			if value, ok := length(cs.Height, 0); ok {
+				ch = value
+				if cs.BoxSizing != css.KeywordBorderBox {
+					ch += inH
+				}
+			}
+		}
+		cw = boxBound(cw, cs.MinWidth, cs.MaxWidth, w, inW, cs.BoxSizing == css.KeywordBorderBox)
+		ch = boxBound(ch, cs.MinHeight, cs.MaxHeight, 0, inH, cs.BoxSizing == css.KeywordBorderBox)
+		// Natural measurement is an unwrapped envelope; actual placement
+		// distributes flex-basis and wraps against the definite container size.
+		margin := edges(cs.Margin, w)
+		cw += margin.horizontal()
+		ch += margin.vertical()
+		if row {
+			if count > 0 {
+				size.W += gap
+			}
+			size.W += cw
+			size.H = math.Max(size.H, ch)
+		} else if n.Kind == Stack {
+			size.W = math.Max(size.W, cw)
+			size.H = math.Max(size.H, ch)
+		} else {
+			if count > 0 && st.Display == css.KeywordFlex {
+				size.H += gap
+			}
+			size.W = math.Max(size.W, cw)
+			size.H += ch
+		}
+		count++
+	}
+	return size, nil, nil
 }
 func (c context) place(n *Node, x, y, availableW, availableH float64, forcedW, forcedH *float64, depth int) (*Result, error) {
 	if depth > 256 {
@@ -382,6 +459,18 @@ func (c context) place(n *Node, x, y, availableW, availableH float64, forcedW, f
 	// Block and stack auto heights depend on their children's envelopes.
 	flex := s.Display == css.KeywordFlex
 	if flex {
+		// An auto-height flex container needs its children's natural height
+		// before distributing space. Otherwise every child is shrunk into zero.
+		// This repeats subtree measurement for nested auto-height containers;
+		// a node/width map cache cost more time and memory in our benchmarks.
+		if !explicitH {
+			natural, _, measureErr := c.intrinsicDepth(n, contentW, 1)
+			if measureErr != nil {
+				return nil, measureErr
+			}
+			r.Border.H = boxBound(math.Max(natural.H+insetH, h), s.MinHeight, s.MaxHeight, availableH, insetH, borderBox)
+			r.Content.H = safe(r.Border.H - insetH)
+		}
 		err = c.flex(n, r, s, depth)
 	} else {
 		err = c.children(n, r, s, depth)
@@ -627,7 +716,7 @@ func (c context) flex(n *Node, r *Result, s css.Style, depth int) error {
 		} else {
 			measureWidth = crossSize
 		}
-		measured, _, err := c.intrinsic(ch, measureWidth)
+		measured, _, err := c.intrinsicDepth(ch, measureWidth, 1)
 		if err != nil {
 			return err
 		}
