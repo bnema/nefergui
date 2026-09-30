@@ -17,7 +17,7 @@ The demo-frame benchmark builds the light, comfortable document workspace with t
 | render / ListBufferReuse | 61,718 | 0 | 0 | 130,000 | 0 | 0 |
 | layout / Paint | 114,138 | 479,360 | 4 | 240,000 | 960,000 | 8 |
 | layout / LayoutPaintTree | 184,427 | 546,648 | 313 | 380,000 | 1,100,000 | 650 |
-| layout / Layout1000 | 893,140 | 731,926 | 1,027 | 1,350,000 | 1,470,000 | 2,100 |
+| layout / Layout1000 | 893,140 | 731,926 | 1,027 | 1,800,000 | 1,470,000 | 2,100 |
 | text / AtlasWarmLookup | 31.80 | 0 | 0 | 65 | 0 | 0 |
 | text / RasterDistinct1000 | 4,214,124 | 8,566,131 | 16,784 | 8,500,000 | 17,200,000 | 34,000 |
 | text / ShapeParagraph (uncached) | 230,170 | 280,984 | 895 | 500,000 | 570,000 | 1,800 |
