@@ -80,13 +80,17 @@ void main() {
         float hole = inner.z > 0.0 && inner.w > 0.0 ? cover(roundedDistance(p, inner, innerRadii)) : 0.0;
         coverage *= 1.0 - hole;
         if (fragKind < 2.5) {
-            // Diagonal split: classify by the nearest normalized edge of the
-            // outer box. Ties go to top/bottom (stable at 45-degree corners).
-            vec2 uv = (p - fragBounds.xy) / fragBounds.zw;
-            float h = min(uv.x, 1.0 - uv.x);
-            float v = min(uv.y, 1.0 - uv.y);
-            color = v <= h ? (uv.y < .5 ? fragSideTop : fragSideBottom)
-                           : (uv.x < .5 ? fragSideLeft : fragSideRight);
+            // Split corners using each painted side's width. A zero-width
+            // side must never contribute its default color at the corners.
+            vec2 edge = p - fragBounds.xy;
+            vec2 farEdge = fragBounds.zw - edge;
+            float top = fragWidths.x > 0.0 ? edge.y / fragWidths.x : 1e20;
+            float right = fragWidths.y > 0.0 ? farEdge.x / fragWidths.y : 1e20;
+            float bottom = fragWidths.z > 0.0 ? farEdge.y / fragWidths.z : 1e20;
+            float left = fragWidths.w > 0.0 ? edge.x / fragWidths.w : 1e20;
+            float nearest = min(min(top, bottom), min(left, right));
+            color = nearest == top ? fragSideTop : nearest == bottom ? fragSideBottom
+                  : nearest == left ? fragSideLeft : fragSideRight;
         }
     } else if (fragKind > 3.5) {
         vec4 box = fragShape;

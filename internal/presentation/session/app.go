@@ -63,11 +63,7 @@ func (s *Session) RunApp(ctx context.Context, app AppHooks) error {
 			}
 		}
 		committed, err := sched.Step(s.Window.FrameReady, app.Draw, func(prepared render.Frame) (bool, error) {
-			instances, batches, stats := render.ListBatches(prepared)
-			if len(stats.Skipped) != 0 {
-				return false, fmt.Errorf("unsupported list operations: %v", stats.Skipped)
-			}
-			return s.tick(nil, instances, prepared.Uploads, batches)
+			return s.tickFrame(prepared)
 		})
 		if err != nil {
 			return err

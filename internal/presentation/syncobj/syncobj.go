@@ -6,7 +6,6 @@
 package syncobj
 
 import (
-	"errors"
 	"fmt"
 	"runtime"
 	"time"
@@ -74,10 +73,25 @@ func (n *Node) Close() error {
 	n.fd = -1
 	return err
 }
-func (n *Node) ioctl(request uintptr, arg unsafe.Pointer) error {
+
+// ioctlErrno performs the ioctl and returns the raw errno without allocating.
+// Embedded addresses must not move: no split-checked call may occur between
+// encoding them and the syscall. KeepAlive alone does not prevent stack moves.
+//
+//go:nosplit
+func (n *Node) ioctlErrno(request uintptr, arg unsafe.Pointer) unix.Errno {
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(n.fd), request, uintptr(arg))
-	if errno != 0 {
-		return fmt.Errorf("DRM syncobj ioctl %#x: %w", request, errno)
+	return errno
+}
+
+// ioctlError adds request context to a real errno. Only failure paths pay for it.
+func ioctlError(request uintptr, errno unix.Errno) error {
+	return fmt.Errorf("DRM syncobj ioctl %#x: %w", request, errno)
+}
+
+func (n *Node) ioctl(request uintptr, arg unsafe.Pointer) error {
+	if errno := n.ioctlErrno(request, arg); errno != 0 {
+		return ioctlError(request, errno)
 	}
 	return nil
 }
@@ -173,17 +187,25 @@ func (n *Node) WaitPoint(handle uint32, point uint64, timeout time.Duration) (bo
 	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &now); err != nil {
 		return false, err
 	}
-	a := timelineWaitArg{Handles: uint64(uintptr(unsafe.Pointer(&h))), Points: uint64(uintptr(unsafe.Pointer(&p))), TimeoutNS: now.Nano() + timeout.Nanoseconds(), Count: 1, Flags: 2}
-	err := n.ioctl(ioctlTimelineWait, unsafe.Pointer(&a))
+	deadline := now.Nano() + timeout.Nanoseconds()
+	a := timelineWaitArg{Handles: uint64(uintptr(unsafe.Pointer(&h))), Points: uint64(uintptr(unsafe.Pointer(&p))), TimeoutNS: deadline, Count: 1, Flags: 2}
+	errno := n.ioctlErrno(ioctlTimelineWait, unsafe.Pointer(&a))
 	runtime.KeepAlive(h)
 	runtime.KeepAlive(p)
-	if err != nil {
-		if errors.Is(err, unix.ETIME) || errors.Is(err, unix.EBUSY) {
-			return false, nil
-		}
-		return false, err
+	return waitResult(errno)
+}
+
+// waitResult maps a TIMELINE_WAIT errno. ETIME and EBUSY are the expected idle
+// timeout outcomes and build no error value; anything else keeps its context.
+func waitResult(errno unix.Errno) (bool, error) {
+	switch errno {
+	case 0:
+		return true, nil
+	case unix.ETIME, unix.EBUSY:
+		return false, nil
+	default:
+		return false, ioctlError(ioctlTimelineWait, errno)
 	}
-	return true, nil
 }
 
 // Signaled performs a zero-time wait for tests and shutdown diagnostics.
@@ -197,11 +219,11 @@ func (n *Node) Query(handle uint32) (uint64, error) {
 	h := handle
 	var point uint64
 	a := queryArg{Handles: uint64(uintptr(unsafe.Pointer(&h))), Points: uint64(uintptr(unsafe.Pointer(&point))), Count: 1}
-	err := n.ioctl(ioctlQuery, unsafe.Pointer(&a))
+	errno := n.ioctlErrno(ioctlQuery, unsafe.Pointer(&a))
 	runtime.KeepAlive(h)
 	runtime.KeepAlive(point)
-	if err != nil {
-		return 0, err
+	if errno != 0 {
+		return 0, ioctlError(ioctlQuery, errno)
 	}
 	return point, nil
 }

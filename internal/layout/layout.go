@@ -178,11 +178,29 @@ func Layout(root *Node, options Options) (Output, error) {
 		return Output{}, err
 	}
 	out := Output{Tree: tree}
-	ctx.paint(root, tree, &out.Display)
+	out.Display = ctx.display(root, tree)
 	return out, nil
 }
 
-type context struct{ options Options }
+// display paints the placed tree into a list sized once from the tree.
+func (c context) display(root *Node, tree *Result) []Command {
+	n := countCommands(root, tree)
+	if n.commands == 0 {
+		return nil
+	}
+	out := make([]Command, 0, n.commands)
+	c.shadows, c.runs, c.glyphs = newSlab[css.Shadow](n.shadows), newSlab[Run](n.runs), newSlab[Glyph](n.glyphs)
+	c.paint(root, tree, &out)
+	return out
+}
+
+type context struct {
+	options Options
+	// Painter-owned display storage, sized by countCommands; nil is valid.
+	shadows *slab[css.Shadow]
+	runs    *slab[Run]
+	glyphs  *slab[Glyph]
+}
 
 func style(n *Node) css.Style {
 	if n.Style != nil {
@@ -209,6 +227,13 @@ func boxBound(border float64, minL, maxL css.Length, basis, insets float64, bord
 	return safe(bounded(safe(border-insets), minL, maxL, basis) + insets)
 }
 func (c context) intrinsic(n *Node, w float64) (Size, []text.Line, error) {
+	return c.intrinsicDepth(n, w, 0)
+}
+
+func (c context) intrinsicDepth(n *Node, w float64, depth int) (Size, []text.Line, error) {
+	if depth > 256 {
+		return Size{}, nil, ErrDepth
+	}
 	if n.Measure != nil {
 		s, lines, err := n.Measure(w)
 		if err != nil {
@@ -230,7 +255,13 @@ func (c context) intrinsic(n *Node, w float64) (Size, []text.Line, error) {
 		if req.Size == 0 {
 			req.Size = 16
 		}
-		l, err := c.options.TextEngine.Measure(n.Content, req, w)
+		content := n.Content
+		if content == "" && n.EditorScroll {
+			// Preserve one font-metric line for empty editors, caret geometry
+			// and IME composition without painting a visible glyph.
+			content = " "
+		}
+		l, err := c.options.TextEngine.Measure(content, req, w)
 		if err != nil {
 			return Size{}, nil, err
 		}
@@ -264,7 +295,71 @@ func (c context) intrinsic(n *Node, w float64) (Size, []text.Line, error) {
 		}
 		return Size{safe(l.Width), safe(l.Height)}, l.Lines, nil
 	}
-	return Size{}, nil, nil
+	if depth == 0 {
+		return Size{}, nil, nil
+	}
+	// Containers contribute their children to auto flex sizing. Measuring them
+	// as zero compresses nested columns and makes empty editors collapse.
+	st := style(n)
+	row := st.Display == css.KeywordFlex && st.FlexDirection != css.KeywordColumn
+	gap := positive(st.RowGap, w)
+	if row {
+		gap = positive(st.ColumnGap, w)
+	}
+	var size Size
+	count := 0
+	for _, child := range n.Children {
+		if child == nil || style(child).Display == css.KeywordNone {
+			continue
+		}
+		cs := style(child)
+		inW, inH := flexInsets(cs, w)
+		measured, _, err := c.intrinsicDepth(child, safe(w-inW), depth+1)
+		if err != nil {
+			return Size{}, nil, err
+		}
+		cw, ch := measured.W+inW, measured.H+inH
+		if value, ok := length(cs.Width, w); ok && cs.Width.Unit != "%" {
+			cw = value
+			if cs.BoxSizing != css.KeywordBorderBox {
+				cw += inW
+			}
+		}
+		// Percent heights need a definite containing height, unavailable here.
+		if cs.Height.Unit != "%" {
+			if value, ok := length(cs.Height, 0); ok {
+				ch = value
+				if cs.BoxSizing != css.KeywordBorderBox {
+					ch += inH
+				}
+			}
+		}
+		cw = boxBound(cw, cs.MinWidth, cs.MaxWidth, w, inW, cs.BoxSizing == css.KeywordBorderBox)
+		ch = boxBound(ch, cs.MinHeight, cs.MaxHeight, 0, inH, cs.BoxSizing == css.KeywordBorderBox)
+		// Natural measurement is an unwrapped envelope; actual placement
+		// distributes flex-basis and wraps against the definite container size.
+		margin := edges(cs.Margin, w)
+		cw += margin.horizontal()
+		ch += margin.vertical()
+		if row {
+			if count > 0 {
+				size.W += gap
+			}
+			size.W += cw
+			size.H = math.Max(size.H, ch)
+		} else if n.Kind == Stack {
+			size.W = math.Max(size.W, cw)
+			size.H = math.Max(size.H, ch)
+		} else {
+			if count > 0 && st.Display == css.KeywordFlex {
+				size.H += gap
+			}
+			size.W = math.Max(size.W, cw)
+			size.H += ch
+		}
+		count++
+	}
+	return size, nil, nil
 }
 func (c context) place(n *Node, x, y, availableW, availableH float64, forcedW, forcedH *float64, depth int) (*Result, error) {
 	if depth > 256 {
@@ -364,6 +459,18 @@ func (c context) place(n *Node, x, y, availableW, availableH float64, forcedW, f
 	// Block and stack auto heights depend on their children's envelopes.
 	flex := s.Display == css.KeywordFlex
 	if flex {
+		// An auto-height flex container needs its children's natural height
+		// before distributing space. Otherwise every child is shrunk into zero.
+		// This repeats subtree measurement for nested auto-height containers;
+		// a node/width map cache cost more time and memory in our benchmarks.
+		if !explicitH {
+			natural, _, measureErr := c.intrinsicDepth(n, contentW, 1)
+			if measureErr != nil {
+				return nil, measureErr
+			}
+			r.Border.H = boxBound(math.Max(natural.H+insetH, h), s.MinHeight, s.MaxHeight, availableH, insetH, borderBox)
+			r.Content.H = safe(r.Border.H - insetH)
+		}
 		err = c.flex(n, r, s, depth)
 	} else {
 		err = c.children(n, r, s, depth)
@@ -609,7 +716,7 @@ func (c context) flex(n *Node, r *Result, s css.Style, depth int) error {
 		} else {
 			measureWidth = crossSize
 		}
-		measured, _, err := c.intrinsic(ch, measureWidth)
+		measured, _, err := c.intrinsicDepth(ch, measureWidth, 1)
 		if err != nil {
 			return err
 		}
@@ -743,56 +850,162 @@ func (c context) flex(n *Node, r *Result, s css.Style, depth int) error {
 	return nil
 }
 
+// slab hands out detached values or sub-slices from one exactly sized block,
+// so a display list costs a few allocations rather than one per shadow, run or
+// text command. Blocks are never resized or reused, so pointers and slices
+// stay valid for the life of the returned Output. Sub-slices have their
+// capacity clipped, so a caller's append cannot overwrite a neighbour. A
+// miscount, or a nil slab, only falls back to individual allocations.
+type slab[T any] struct{ block []T }
+
+func newSlab[T any](n int) *slab[T] {
+	if n <= 0 {
+		return nil
+	}
+	return &slab[T]{block: make([]T, 0, n)}
+}
+
+// one stores v in the slab and returns its address.
+func (a *slab[T]) one(v T) *T {
+	if a == nil || len(a.block) == cap(a.block) {
+		p := new(T) // copy, so v itself never escapes
+		*p = v
+		return p
+	}
+	a.block = append(a.block, v)
+	return &a.block[len(a.block)-1]
+}
+
+// take returns an empty slice with capacity exactly n (nil for n == 0).
+func (a *slab[T]) take(n int) []T {
+	if n <= 0 {
+		return nil
+	}
+	if a == nil || cap(a.block)-len(a.block) < n {
+		return make([]T, 0, n)
+	}
+	i := len(a.block)
+	a.block = a.block[:i+n]
+	return a.block[i : i : i+n]
+}
+
+// radiiOf resolves border-radius percentages against basis.
+func radiiOf(s *css.Style, basis float64) [4]float64 {
+	return [4]float64{positive(s.BorderRadius.TopLeft, basis), positive(s.BorderRadius.TopRight, basis), positive(s.BorderRadius.BottomRight, basis), positive(s.BorderRadius.BottomLeft, basis)}
+}
+
+func hasOutline(s *css.Style, r *Result) bool {
+	return s.OutlineStyle == css.KeywordSolid && positive(s.OutlineWidth, r.Border.W) > 0
+}
+
+// countCommands returns how many commands and shadow copies paint emits for
+// the subtree, so Layout can size the display list once. It mirrors paint's
+// conditions; if it ever drifts, paint still appends correctly and only regrows.
+func countCommands(n *Node, r *Result) (c counts) {
+	if r == nil {
+		return c
+	}
+	s := style(n)
+	total := len(s.BoxShadow)
+	c.shadows = len(s.BoxShadow)
+	if s.BackgroundColor.A > 0 {
+		total++
+	}
+	if r.BorderWidths != (Edges{}) || radiiOf(&s, r.Border.W) != ([4]float64{}) {
+		total++
+	}
+	if hasOutline(&s, r) {
+		total++
+	}
+	if r.Clipped {
+		total += 2
+	}
+	if n.Kind == Image || n.Kind == Text {
+		total++
+	}
+	if n.Kind == Text {
+		c.runs, c.glyphs = textCounts(r)
+	}
+	j := 0
+	for _, child := range n.Children {
+		if child == nil || style(child).Display == css.KeywordNone {
+			continue
+		}
+		if j < len(r.Children) {
+			cc := countCommands(child, r.Children[j])
+			total += cc.commands
+			c.shadows += cc.shadows
+			c.runs += cc.runs
+			c.glyphs += cc.glyphs
+			j++
+		}
+	}
+	c.commands += total
+	return c
+}
+
+type counts struct{ commands, shadows, runs, glyphs int }
+
+func textCounts(r *Result) (runs, glyphs int) {
+	for i := range r.Lines {
+		runs += len(r.Lines[i].Runs)
+		for j := range r.Lines[i].Runs {
+			glyphs += len(r.Lines[i].Runs[j].Glyphs)
+		}
+	}
+	return runs, glyphs
+}
+
 func (c context) paint(n *Node, r *Result, out *[]Command) {
 	if r == nil {
 		return
 	}
 	s := style(n)
 	base := Command{ID: r.ID, Rect: r.Border, Opacity: math.Min(1, safe(s.Opacity))}
+	borderRadii := radiiOf(&s, r.Border.W)
 	for i := range s.BoxShadow {
-		sh := s.BoxShadow[i]
-		if sh.Inset {
+		if s.BoxShadow[i].Inset {
 			continue
 		}
 		cmd := base
 		cmd.Op = "shadow"
-		cmd.Shadow = &sh
-		cmd.Radii = [4]float64{positive(s.BorderRadius.TopLeft, r.Border.W), positive(s.BorderRadius.TopRight, r.Border.W), positive(s.BorderRadius.BottomRight, r.Border.W), positive(s.BorderRadius.BottomLeft, r.Border.W)}
+		cmd.Shadow = c.shadows.one(s.BoxShadow[i])
+		cmd.Radii = borderRadii
 		*out = append(*out, cmd)
 	}
 	if s.BackgroundColor.A > 0 {
 		cmd := base
 		cmd.Op = "rect"
 		cmd.Color = s.BackgroundColor
-		cmd.Radii = [4]float64{positive(s.BorderRadius.TopLeft, r.Border.W), positive(s.BorderRadius.TopRight, r.Border.W), positive(s.BorderRadius.BottomRight, r.Border.W), positive(s.BorderRadius.BottomLeft, r.Border.W)}
+		cmd.Radii = borderRadii
 		*out = append(*out, cmd)
 	}
 	cmd := base
 	cmd.Op = "border"
 	cmd.Widths = r.BorderWidths
 	cmd.Colors = s.BorderColor
-	cmd.Radii = [4]float64{positive(s.BorderRadius.TopLeft, r.Border.W), positive(s.BorderRadius.TopRight, r.Border.W), positive(s.BorderRadius.BottomRight, r.Border.W), positive(s.BorderRadius.BottomLeft, r.Border.W)}
+	cmd.Radii = borderRadii
 	if cmd.Widths != (Edges{}) || cmd.Radii != ([4]float64{}) {
 		cmd.Color = s.BorderColor.Top
 		*out = append(*out, cmd)
 	}
 	for i := range s.BoxShadow {
-		sh := s.BoxShadow[i]
-		if !sh.Inset {
+		if !s.BoxShadow[i].Inset {
 			continue
 		}
 		cmd := base
 		cmd.Op = "shadow"
-		cmd.Shadow = &sh
-		cmd.Radii = [4]float64{positive(s.BorderRadius.TopLeft, r.Border.W), positive(s.BorderRadius.TopRight, r.Border.W), positive(s.BorderRadius.BottomRight, r.Border.W), positive(s.BorderRadius.BottomLeft, r.Border.W)}
+		cmd.Shadow = c.shadows.one(s.BoxShadow[i])
+		cmd.Radii = borderRadii
 		*out = append(*out, cmd)
 	}
-	if s.OutlineStyle == css.KeywordSolid && positive(s.OutlineWidth, r.Border.W) > 0 {
+	if hasOutline(&s, r) {
 		cmd = base
 		cmd.Op = "outline"
 		cmd.Color = s.OutlineColor
-		cmd.Radii = [4]float64{positive(s.BorderRadius.TopLeft, r.Border.W), positive(s.BorderRadius.TopRight, r.Border.W), positive(s.BorderRadius.BottomRight, r.Border.W), positive(s.BorderRadius.BottomLeft, r.Border.W)}
-		cmd.Widths = Edges{Top: positive(s.OutlineWidth, r.Border.W), Right: positive(s.OutlineWidth, r.Border.W), Bottom: positive(s.OutlineWidth, r.Border.W), Left: positive(s.OutlineWidth, r.Border.W)}
+		cmd.Radii = borderRadii
+		width := positive(s.OutlineWidth, r.Border.W)
+		cmd.Widths = Edges{Top: width, Right: width, Bottom: width, Left: width}
 		offset := coordValue(s.OutlineOffset, r.Border.W)
 		cmd.Rect = Rect{X: coord(r.Border.X - offset), Y: coord(r.Border.Y - offset), W: safe(r.Border.W + 2*offset), H: safe(r.Border.H + 2*offset)}
 		*out = append(*out, cmd)
@@ -808,7 +1021,7 @@ func (c context) paint(n *Node, r *Result, out *[]Command) {
 		cmd.Op = "image"
 		cmd.Rect = r.Content
 		cmd.Image = n.Image
-		cmd.Radii = [4]float64{positive(s.BorderRadius.TopLeft, r.Content.W), positive(s.BorderRadius.TopRight, r.Content.W), positive(s.BorderRadius.BottomRight, r.Content.W), positive(s.BorderRadius.BottomLeft, r.Content.W)}
+		cmd.Radii = radiiOf(&s, r.Content.W)
 		*out = append(*out, cmd)
 	}
 	if n.Kind == Text {
@@ -817,6 +1030,9 @@ func (c context) paint(n *Node, r *Result, out *[]Command) {
 		cmd.Rect = r.Content
 		cmd.Text = n.Content
 		cmd.Color = s.Color
+		runs, glyphs := textCounts(r)
+		cmd.Runs = c.runs.take(runs)
+		backing := c.glyphs.take(glyphs)
 		for _, line := range r.Lines {
 			offset := AlignOffset(s.TextAlign, line.Direction, r.Content.W, line.Width)
 			for _, run := range line.Runs {
@@ -827,8 +1043,12 @@ func (c context) paint(n *Node, r *Result, out *[]Command) {
 				if run.Face != nil {
 					rr.FaceID = run.Face.ID
 				}
-				for _, g := range run.Glyphs {
-					rr.Glyphs = append(rr.Glyphs, Glyph{uint32(g.ID), g.X + r.Content.X + offset - r.ScrollX, g.Y + r.Content.Y - r.ScrollY, g.Advance, g.Cluster})
+				if len(run.Glyphs) > 0 { // keep nil for glyph-less runs
+					first := len(backing)
+					for _, g := range run.Glyphs {
+						backing = append(backing, Glyph{uint32(g.ID), g.X + r.Content.X + offset - r.ScrollX, g.Y + r.Content.Y - r.ScrollY, g.Advance, g.Cluster})
+					}
+					rr.Glyphs = backing[first:len(backing):len(backing)]
 				}
 				cmd.Runs = append(cmd.Runs, rr)
 			}

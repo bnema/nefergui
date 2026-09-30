@@ -228,6 +228,10 @@ func styleCommands() []layout.Command {
 		{Op: "shadow", Rect: box, Radii: radius, Shadow: &sh, Opacity: 1},
 		{Op: "rect", Rect: box, Radii: radius, Color: css.Color{R: 1, G: 1, B: 1, A: 1}, Opacity: 1},
 		{Op: "border", Rect: box, Radii: radius, Widths: layout.Edges{Top: 8, Right: 8, Bottom: 8, Left: 8}, Colors: css.ColorSides{Top: css.Color{R: 1, A: 1}, Right: css.Color{G: 1, A: 1}, Bottom: css.Color{B: 1, A: 1}, Left: css.Color{R: 1, G: 1, A: 1}}, Color: css.Color{A: 1}, Opacity: 1},
+		// Zero-width sides retain deliberately contrasting colors to catch
+		// accidental corner contributions from unpainted edges.
+		{Op: "border", Rect: layout.Rect{X: 300, Y: 40, W: 80, H: 50}, Widths: layout.Edges{Top: 8}, Colors: css.ColorSides{Top: css.Color{R: 1, A: 1}, Left: css.Color{G: 1, A: 1}, Right: css.Color{G: 1, A: 1}}, Color: css.Color{A: 1}, Opacity: 1},
+		{Op: "border", Rect: layout.Rect{X: 300, Y: 240, W: 80, H: 50}, Widths: layout.Edges{Top: 8, Left: 2}, Colors: css.ColorSides{Top: css.Color{R: 1, A: 1}, Left: css.Color{B: 1, A: 1}}, Color: css.Color{A: 1}, Opacity: 1},
 		// Layout has already expanded this rect by the 4px outline offset.
 		{Op: "outline", Rect: layout.Rect{X: 116, Y: 116, W: 168, H: 128}, Radii: radius, Widths: layout.Edges{Top: 3, Right: 3, Bottom: 3, Left: 3}, Color: css.Color{R: 1, G: 0, B: 1, A: 1}, Opacity: 1},
 	}

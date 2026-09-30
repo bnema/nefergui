@@ -74,6 +74,28 @@ func scaled(e layout.Edges, scale float64) layout.Edges {
 	return layout.Edges{Top: e.Top * scale, Right: e.Right * scale, Bottom: e.Bottom * scale, Left: e.Left * scale}
 }
 
+// maxQuadPrealloc bounds speculative storage for mostly clipped documents.
+// Visible frames larger than this grow normally as their quads are emitted.
+const maxQuadPrealloc = 512
+
+// quadCapacity estimates one quad per glyph and drawable command, capped so
+// offscreen content cannot force a large allocation before culling.
+func quadCapacity(commands []layout.Command) int {
+	n := 0
+	for i := range commands {
+		switch cmd := &commands[i]; cmd.Op {
+		case "clip-push", "clip-pop":
+		case "text", "preedit-text":
+			for j := range cmd.Runs {
+				n += len(cmd.Runs[j].Glyphs)
+			}
+		default:
+			n++
+		}
+	}
+	return min(n, maxQuadPrealloc)
+}
+
 // Prepare converts logical rectangles once, using layout.Physical as the sole
 // logical-to-physical edge-rounding boundary. A clip-push intersects its parent
 // clip; rounded clips intentionally use only their axis-aligned bounds in V1.
@@ -86,6 +108,12 @@ func (p *Preparer) Prepare(commands []layout.Command, scale float64, width, heig
 	}
 	p.Atlas.BeginFrame()
 	frame := Frame{}
+	if n := quadCapacity(commands); n > 0 {
+		// Frames are returned detached and may outlive later Prepare calls, so
+		// the backing array is never reused. Bound the initial reservation;
+		// larger visible frames grow through append after culling.
+		frame.Quads = make([]Quad, 0, n)
+	}
 	clip := layout.Rect{W: float64(width), H: float64(height)}
 	stack := []layout.Rect{}
 	for _, cmd := range commands {

@@ -389,6 +389,10 @@ func TestListStyles(t *testing.T) {
 				{"rounded corner", 113 * scale, 113 * scale, bg},
 				{"outline", 200 * scale, 114 * scale, color.NRGBA{255, 0, 255, 255}},
 				{"far", 200 * scale, 285 * scale, bg},
+				{"single-side left corner", 300 * scale, 43 * scale, color.NRGBA{255, 0, 0, 255}},
+				{"single-side right corner", 379 * scale, 43 * scale, color.NRGBA{255, 0, 0, 255}},
+				{"unequal corner top", 301 * scale, 242 * scale, color.NRGBA{255, 0, 0, 255}},
+				{"unequal corner left", 300 * scale, 246 * scale, color.NRGBA{0, 0, 255, 255}},
 			}
 			for _, p := range probes {
 				got := color.NRGBAModel.Convert(img.At(p.x, p.y)).(color.NRGBA)

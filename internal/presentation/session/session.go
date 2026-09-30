@@ -49,6 +49,7 @@ type Session struct {
 	Pipeline         *vkdevice.Pipeline
 	ListPipeline     *vkdevice.Pipeline
 	Preparer         *render.Preparer
+	list             render.ListBuffer // owner-loop scratch; see tickFrame
 	Slots            map[uint64]*Slot
 	retiredPipelines []retiredPipelines
 	Acquire          uint32
@@ -340,6 +341,20 @@ func (s *Session) TickList(instances []vkdevice.Instance, uploads []text.Upload)
 		batches = []vkdevice.Batch{{Count: uint32(len(instances))}}
 	}
 	return s.tick(nil, instances, uploads, batches)
+}
+
+// tickFrame lists and submits one prepared frame on the owner loop. The list
+// buffer's slices are borrowed only for this call: tick copies instances into
+// mapped GPU memory and resolve copies batches before returning, and no pending
+// GPU work or retained frame refers to them (a blocked frame is re-listed from
+// its render.Frame on retry). Release then drops borrowed image references.
+func (s *Session) tickFrame(frame render.Frame) (bool, error) {
+	defer s.list.Release()
+	instances, batches, stats := s.list.List(frame)
+	if len(stats.Skipped) != 0 {
+		return false, fmt.Errorf("unsupported list operations: %v", stats.Skipped)
+	}
+	return s.tick(nil, instances, frame.Uploads, batches)
 }
 
 func (s *Session) tick(rect *vkdevice.Rect, instances []vkdevice.Instance, uploads []text.Upload, batches []vkdevice.Batch) (bool, error) {
@@ -682,11 +697,7 @@ func (s *Session) RunPreparedListWithCommit(ctx context.Context, frames int, dra
 		if err != nil {
 			return false, err
 		}
-		instances, batches, stats := render.ListBatches(frame)
-		if len(stats.Skipped) != 0 {
-			return false, fmt.Errorf("unsupported list operations: %v", stats.Skipped)
-		}
-		return s.tick(nil, instances, frame.Uploads, batches)
+		return s.tickFrame(frame)
 	}, committed)
 }
 
