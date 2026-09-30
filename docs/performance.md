@@ -1,4 +1,6 @@
-# CPU performance budgets
+# Performance
+
+## CPU budgets
 
 AMD Ryzen 9 7900X3D 12-Core Processor; `CGO_ENABLED=0 GOWORK=off go test -run '^$' -bench . -benchmem -count=5` in the indicated packages. Entries are medians of five runs. Budgets are approximately twice the measured medians (zero allocations remain zero). CPU numbers vary with machine load. The demo-frame benchmark builds a headless home-view tree, computes layout and produces a display list after warmup; Prepare uses a representative warm text/box command mix and excludes GPU submission.
 
@@ -24,11 +26,29 @@ Frame construction stays low-allocation because:
 - `text.Engine.Measure` caches results by text, request and width; entries unused for two frames are evicted and the cache holds at most 4,096 entries (callers treat results as immutable and use `Layout.Clone` before adjusting positions);
 - identity path keys are computed once per element.
 
-`Run` builds a frame only on input or a redraw request, so an idle window allocates nothing. Profile with:
+`Run` builds a frame only on input or a redraw request. Idle frame construction stops, but platform release-wait polling can still allocate small amounts. Profile with:
 
 ```sh
-go test -run '^$' -bench BenchmarkDemoFrame -benchmem -memprofile mem.out -memprofilerate=1 .
+go test -run '^$' -bench BenchmarkDemoFrame -benchmem -memprofile mem.out -memprofilerate=1 ./internal/ui
 go tool pprof -sample_index=alloc_objects -top -cum mem.out
 ```
 
 A 400-frame demo harness run (960×640, scale 1, input: name Ada then continue) recorded `submit_to_commit_ns` median **184,545 ns** and nearest-rank p95 **481,550 ns** in `frame-timings.jsonl`. This is host-side submission-to-Wayland-commit latency, not GPU execution time. `atlas_pages` stayed at **1** allocated 1024×1024 grayscale page (maximum 4) for all 400 frames. These figures depend on the compositor, driver and machine load.
+
+## Memory as a dependency
+
+An external Go module with a minimal counter view, a 960×640 window, and a private headless NeferWL compositor was profiled on AMD/RADV. Debug readbacks were disabled. Live Go heap was sampled after forced GC; RSS includes shared driver libraries, while PSS apportions shared pages.
+
+| Measurement | Minimal view | Demo view |
+|---|---:|---:|
+| Live Go heap after 1,000 frames | 5.3 MiB | 5.4 MiB |
+| Process RSS / PSS after 1,000 frames | 60 / 43 MiB | 64 / 47 MiB |
+| Estimated temporary allocations per rendered frame, sampler excluded | about 65 KiB | about 230 KiB |
+
+The minimal view starts at about 0.75 MiB live Go heap, reaches 5.2 MiB after the first frame, and returns to about 0.9 MiB after closing. No sustained live-heap growth was observed over 1,000–3,000 frames. Driver mappings and Go heap capacity can remain resident after closing; RSS is not a leak measurement on its own.
+
+DRM counters reported about 41 MiB VRAM and 4 MiB GTT once all three presentation buffers were active. Window dimensions, scale, fonts and driver affect these figures. These are measurements on one stack, not portable limits.
+
+The largest frame-allocation sources are prepared quads, render batches, and layout painting. Release-wait polling allocated about 150 KiB over a 38-second idle interval. `NEFERGUI_DEBUG_DIR` enables readbacks and PNG work and raised observed peak RSS to about 113 MiB; leave it unset when measuring ordinary application cost.
+
+Use `pprof`'s `alloc_space` to find cumulative allocation churn and `inuse_space` after GC to inspect retained Go memory. Use `/proc/<pid>/smaps_rollup` for RSS/PSS and DRM fdinfo for GPU counters; heap profiles do not include driver or GPU memory.
