@@ -43,37 +43,20 @@ func (r *runtime) paintEditors(root *element, out *layout.Output) {
 }
 
 // editorDecoration maps logical grapheme selection to visual cluster spans.
-// A bidi boundary uses the run containing the character before the cursor:
-// later duplicate offsets must not override the first span's trailing edge.
+// The caret follows editorGeometry's policy: at an ambiguous boundary, such as
+// a bidi run change, the preceding character's trailing edge is used.
 func editorDecoration(s *edit.State, n *layout.Result, display []layout.Command, password, focused bool) []layout.Command {
 	if n == nil {
 		return nil
 	}
-	value := s.Value
 	start, end := s.Range()
-	cursor := s.Cursor
-	if password {
-		boundaries := edit.Boundaries(value)
-		value = s.Mask()
-		render := edit.Boundaries(value)
-		for i, b := range boundaries {
-			if b == start {
-				start = render[i]
-			}
-			if b == end {
-				end = render[i]
-			}
-			if b == cursor {
-				cursor = render[i]
-			}
-		}
-	}
-	lines := textBoundaries(value, n, display)
+	geometry := newEditorGeometry(s, n, display, password)
+	lines := geometry.lines
 	var result []layout.Command
 	for i, line := range lines {
 		h := 0.0
 		if i < len(n.Lines) {
-			h = n.Lines[i].Height
+			h = geometry.lineHeight(i)
 		}
 		for j := 0; j+1 < len(line); j += 2 {
 			a, b := line[j], line[j+1]
@@ -94,29 +77,14 @@ func editorDecoration(s *edit.State, n *layout.Result, display []layout.Command,
 		}
 	}
 	if focused {
-		var point *textBoundary
-		// The trailing edge of the preceding character takes priority over the
-		// leading edge of the following run when both map to the same offset.
-		for i := range lines {
-			for j := range lines[i] {
-				b := &lines[i][j]
-				if b.byteOffset == cursor && point == nil {
-					point = b
-				}
-			}
-		}
-		if point == nil && len(lines) == 0 {
+		// Selection and caret share the geometry's caret policy: the trailing
+		// edge of the preceding character wins over a later duplicate offset.
+		point, found := geometry.caret(s.Cursor)
+		if !found && len(lines) == 0 {
 			result = append(result, layout.Command{Op: "caret", ID: n.ID, Rect: layout.Rect{X: n.Content.X, Y: n.Content.Y, W: 1, H: n.Content.H}, Color: caretColor, Opacity: 1})
 		}
-		if point != nil {
-			h := n.Content.H
-			for i, line := range lines {
-				if len(line) > 0 && line[0].y == point.y && i < len(n.Lines) {
-					h = n.Lines[i].Height
-					break
-				}
-			}
-			result = append(result, layout.Command{Op: "caret", ID: n.ID, Rect: layout.Rect{X: point.x, Y: point.y, W: 1, H: h}, Color: caretColor, Opacity: 1})
+		if found {
+			result = append(result, layout.Command{Op: "caret", ID: n.ID, Rect: layout.Rect{X: point.x, Y: point.y, W: 1, H: geometry.lineHeight(point.line)}, Color: caretColor, Opacity: 1})
 		}
 	}
 	return result

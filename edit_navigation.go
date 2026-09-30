@@ -9,8 +9,9 @@ import (
 
 // moveVisualLine uses the last committed wrap geometry; preferred X survives
 // consecutive vertical moves, but is reset by horizontal editing and pointer input.
-func moveVisualLine(s *edit.State, n *layout.Result, display []layout.Command, down, shift bool) {
-	lines := textBoundaries(s.Value, n, display)
+func moveVisualLine(s *edit.State, n *layout.Result, display []layout.Command, password, down, shift bool) {
+	geometry := newEditorGeometry(s, n, display, password)
+	lines := geometry.lines
 	if len(lines) == 0 {
 		return
 	}
@@ -22,14 +23,12 @@ func moveVisualLine(s *edit.State, n *layout.Result, display []layout.Command, d
 				break
 			}
 		}
-		// Prefer the following line at a shared wrap boundary.
 	}
+	// Navigation prefers the following line at a shared wrap boundary, unlike
+	// the painted caret, which stays at the end of the preceding line.
 	if !s.PreferredXValid {
-		for _, b := range lines[current] {
-			if b.byteOffset == s.Cursor {
-				s.PreferredX = b.x
-				break
-			}
+		if b, ok := geometry.caretOnLine(current, s.Cursor); ok {
+			s.PreferredX = b.x
 		}
 		s.PreferredXValid = true
 	}

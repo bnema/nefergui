@@ -71,30 +71,11 @@ func preeditCommands(s *edit.State, n *layout.Result, e *element, engine *text.E
 	if s.Preedit == "" || n == nil || e.computed == nil {
 		return nil
 	}
-	value := s.Value
-	cursor := s.Cursor
-	if e.password {
-		value = s.Mask()
-		i := 0
-		for k, b := range edit.Boundaries(s.Value) {
-			if b == cursor {
-				i = k
-				break
-			}
-		}
-		cursor = edit.Boundaries(value)[i]
-	}
-	var origin *textBoundary
-	lines := textBoundaries(value, n, display)
-	for i := range lines {
-		for j := range lines[i] {
-			if lines[i][j].byteOffset == cursor {
-				origin = &lines[i][j]
-			}
-		}
-	}
+	// The composition starts at the same caret position that is painted.
+	geometry := newEditorGeometry(s, n, display, e.password)
+	origin, found := geometry.caret(s.Cursor)
 	x, y := n.Content.X, n.Content.Y
-	if origin != nil {
+	if found {
 		x, y = origin.x, origin.y
 	}
 	st := e.computed.Style
@@ -128,18 +109,9 @@ func preeditCommands(s *edit.State, n *layout.Result, e *element, engine *text.E
 		clamped = b
 	}
 	pos = clamped
-	if e.password {
-		// Preedit offsets are bytes in the original text; the display uses
-		// one bullet per original grapheme, including combined clusters.
-		index := 0
-		for _, b := range edit.Boundaries(s.Preedit) {
-			if b >= pos {
-				break
-			}
-			index++
-		}
-		pos = edit.Boundaries(preedit)[index]
-	}
+	// Preedit offsets are bytes in the original text; a password shows one
+	// bullet per original grapheme, including combined clusters.
+	pos = newDisplayText(s.Preedit, e.password).toShown(pos)
 	// The preedit cursor uses shaped cluster advances, not raw rune count.
 	px := x
 	pr := utf8.RuneCountInString(preedit[:pos])

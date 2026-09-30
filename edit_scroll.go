@@ -35,21 +35,9 @@ func (r *runtime) scrollCaret(root *element, out *layout.Output) bool {
 	if s == nil || n == nil {
 		return false
 	}
-	rendered := e.text
-	cursor := s.Cursor
-	if e.password {
-		cursor = len([]rune(s.Value[:s.Cursor])) * len("•")
-	}
-	lines := textBoundaries(rendered, n, out.Display)
-	var caret *textBoundary
-	for i := range lines {
-		for j := range lines[i] {
-			if lines[i][j].byteOffset == cursor {
-				caret = &lines[i][j]
-			}
-		}
-	}
-	if caret == nil {
+	geometry := newEditorGeometry(s, n, out.Display, e.password)
+	caret, found := geometry.caret(s.Cursor)
+	if !found {
 		return false
 	}
 	old := r.state.scroll[id]
@@ -62,10 +50,7 @@ func (r *runtime) scrollCaret(root *element, out *layout.Output) bool {
 		}
 		next.H = 0
 	} else {
-		height := 0.0
-		if len(n.Lines) > 0 {
-			height = n.Lines[0].Height
-		}
+		height := geometry.lineHeight(caret.line)
 		if caret.y < n.Content.Y {
 			next.H += caret.y - n.Content.Y
 		} else if caret.y+height > n.Content.Y+n.Content.H {

@@ -99,15 +99,7 @@ func (n Node) editControl(typ, label string, value *string, options []EditOption
 			switch input.Kind {
 			case "edit-pointer", "edit-word":
 				editor.PreferredXValid = false
-				rendered := editor.Value
-				if child.element.password {
-					rendered = editor.Mask()
-				}
-				place := nearestTextBoundary(rendered, resultByID(child.frame.layout.Tree, id), child.frame.layout.Display, input.X, input.Y)
-				if child.element.password {
-					index := len(edit.Boundaries(rendered[:place])) - 1
-					place = edit.Boundaries(editor.Value)[index]
-				}
+				place := newEditorGeometry(editor, resultByID(child.frame.layout.Tree, id), child.frame.layout.Display, child.element.password).nearest(input.X, input.Y)
 				if input.Kind == "edit-word" {
 					start, end := editor.WordAt(place)
 					editor.Select(start, end)
@@ -119,7 +111,7 @@ func (n Node) editControl(typ, label string, value *string, options []EditOption
 				ev.changed = editor.Insert(input.Text) || ev.changed
 			case "edit-key":
 				if (input.Text == "up" || input.Text == "down") && typ == "textarea" {
-					moveVisualLine(editor, resultByID(child.frame.layout.Tree, id), child.frame.layout.Display, input.Text == "down", input.Shift)
+					moveVisualLine(editor, resultByID(child.frame.layout.Tree, id), child.frame.layout.Display, child.element.password, input.Text == "down", input.Shift)
 				} else {
 					editor.PreferredXValid = false
 					if input.Ctrl && input.Text == "v" && child.frame.owner != nil {
