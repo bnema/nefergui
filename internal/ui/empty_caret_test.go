@@ -20,6 +20,9 @@ func TestEmptyLabelsDoNotReserveEditorLine(t *testing.T) {
 		root.Text("")
 		root.Heading("")
 	})
+	if len(r.output.Tree.Children) != 2 {
+		t.Fatalf("empty labels: got %d children, want 2", len(r.output.Tree.Children))
+	}
 	for _, child := range r.output.Tree.Children {
 		if child.Content.H != 0 || len(child.Lines) != 0 {
 			t.Fatalf("empty label reserves line: %+v", child)

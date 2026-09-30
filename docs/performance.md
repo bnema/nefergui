@@ -2,32 +2,34 @@
 
 ## CPU budgets
 
-Measured: **2026-09-30, 06:32–06:34 CEST (UTC+02:00)**. Measured commit: **`9064a730c898b48f967b3f2228fb705474b4fdeb`**.
+Measured: **2026-09-30, 07:52–07:54 CEST (UTC+02:00)** on commit `7ad3316fd1add28c1507e28c36883afaeaaad434`.
 
-AMD Ryzen 9 7900X3D; Go `go1.27.1-X:nodwarf5 linux/amd64`. Command: `CGO_ENABLED=0 GOWORK=off go test -mod=readonly -p=1 -run '^$' -bench . -benchmem -count=5 ./internal/ui ./internal/render ./internal/layout ./internal/text ./internal/css`. Package benchmarks run serially; external profiling runs are separate. Entries are medians of five runs. Budgets allow roughly twice the measured medians; zero-allocation paths stay at zero. CPU numbers vary with machine load.
+AMD Ryzen 9 7900X3D; Go `go1.27.1-X:nodwarf5 linux/amd64`. Command: `CGO_ENABLED=0 GOWORK=off go test -mod=readonly -p=1 -run '^$' -bench . -benchmem -count=5 ./internal/ui ./internal/render ./internal/layout ./internal/text ./internal/css`. Package benchmarks run serially; external profiling runs are separate. Entries are medians of five runs. Budgets allow roughly twice the measured medians; zero-allocation paths stay at zero. DemoFrame has a deliberately tighter 1,100-allocation limit to catch editor-workspace regressions. CPU numbers vary with machine load.
 
-The demo-frame benchmark builds a headless home-view tree, computes layout and produces a display list after warmup. Prepare uses a representative text/box command mix and excludes GPU submission. Paint uses 100 cards with two shadows and text; ListBatches uses 2,000 quads with interleaved images. ListBufferReuse and LayoutPaintTree warm their buffers and text cache before resetting the timer; their figures measure steady state.
+The demo-frame benchmark builds the light, comfortable document workspace with the example's actual stylesheet, computes layout and produces a display list after warmup. It includes the toolbar, document list, populated multiline editor and properties pane with input, radios and slider; it excludes GPU submission. Its workload is larger than the older unstyled fixture, so those results are not directly comparable. Prepare uses a representative text/box command mix and excludes GPU submission. Paint uses 100 cards with two shadows and text; ListBatches uses 2,000 quads with interleaved images. ListBufferReuse and LayoutPaintTree warm their buffers and text cache before resetting the timer; their figures measure steady state.
 
 | Package / benchmark | Median ns/op | Median B/op | Median allocs/op | Budget ns/op | Budget B/op | Budget allocs/op |
 |---|---:|---:|---:|---:|---:|---:|
-| internal/ui / DemoFrame | 25,742 | 39,272 | 193 | 55,000 | 80,000 | 500 |
-| render / Prepare | 43,668 | 85,568 | 379 | 100,000 | 175,000 | 800 |
-| render / PrepareBoxes | 67,383 | 229,378 | 1 | 140,000 | 460,000 | 2 |
-| render / ListBatches | 111,578 | 420,481 | 2 | 230,000 | 850,000 | 4 |
-| render / ListBufferReuse | 63,482 | 0 | 0 | 130,000 | 0 | 0 |
-| layout / Paint | 117,118 | 479,360 | 4 | 240,000 | 960,000 | 8 |
-| layout / LayoutPaintTree | 183,966 | 546,648 | 313 | 380,000 | 1,100,000 | 650 |
-| layout / Layout1000 | 667,025 | 731,673 | 1,027 | 1,350,000 | 1,470,000 | 2,100 |
-| text / AtlasWarmLookup | 31.78 | 0 | 0 | 65 | 0 | 0 |
-| text / RasterDistinct1000 | 4,186,372 | 8,566,134 | 16,784 | 8,500,000 | 17,200,000 | 34,000 |
-| text / ShapeParagraph (uncached) | 231,623 | 280,987 | 895 | 500,000 | 570,000 | 1,800 |
-| text / ShapeParagraphCached | 80.29 | 0 | 0 | 160 | 0 | 0 |
-| text / AtlasInsert | 587.0 | 968 | 3 | 1,150 | 2,000 | 6 |
-| css / Engine/cold | 2,379,997 | 1,964,628 | 5,669 | 4,800,000 | 4,000,000 | 11,400 |
-| css / Engine/warm | 100,242 | 1 | 0 | 205,000 | 2 | 0 |
-| css / Engine/state-change | 351,901 | 149,105 | 363 | 700,000 | 300,000 | 750 |
+| internal/ui / DemoFrame | 212,479 | 373,984 | 955 | 430,000 | 750,000 | 1,100 |
+| render / Prepare | 43,776 | 85,568 | 379 | 100,000 | 175,000 | 800 |
+| render / PrepareBoxes | 67,867 | 229,377 | 1 | 140,000 | 460,000 | 2 |
+| render / ListBatches | 114,240 | 420,482 | 2 | 230,000 | 850,000 | 4 |
+| render / ListBufferReuse | 61,718 | 0 | 0 | 130,000 | 0 | 0 |
+| layout / Paint | 114,138 | 479,360 | 4 | 240,000 | 960,000 | 8 |
+| layout / LayoutPaintTree | 184,427 | 546,648 | 313 | 380,000 | 1,100,000 | 650 |
+| layout / Layout1000 | 893,140 | 731,926 | 1,027 | 1,350,000 | 1,470,000 | 2,100 |
+| text / AtlasWarmLookup | 31.80 | 0 | 0 | 65 | 0 | 0 |
+| text / RasterDistinct1000 | 4,214,124 | 8,566,131 | 16,784 | 8,500,000 | 17,200,000 | 34,000 |
+| text / ShapeParagraph (uncached) | 230,170 | 280,984 | 895 | 500,000 | 570,000 | 1,800 |
+| text / ShapeParagraphCached | 80.76 | 0 | 0 | 160 | 0 | 0 |
+| text / AtlasInsert | 558.2 | 968 | 3 | 1,150 | 2,000 | 6 |
+| css / Engine/cold | 2,330,406 | 1,964,620 | 5,669 | 4,800,000 | 4,000,000 | 11,400 |
+| css / Engine/warm | 101,909 | 1 | 0 | 205,000 | 2 | 0 |
+| css / Engine/state-change | 339,806 | 149,105 | 363 | 700,000 | 300,000 | 750 |
 
-`TestDemoFrameAllocationBudget` checks the 500 allocs/op limit with `testing.AllocsPerRun`. Focused tests also check constant quad allocation, bounded paint allocation, allocation-free warm list-buffer reuse, and allocation-free idle wait results. The real-ioctl allocation test is opt-in via `NEFERGUI_RENDER_NODE`. The other table budgets are reference targets, not automated assertions.
+Natural container measurement prevents nested flex text from collapsing, at a CPU cost that grows with nesting depth. Layout1000 measures about 36% slower than the earlier 656 µs run; allocation count stays at 1,027. A per-layout node/width cache increased time and retained allocation in a trial and is not used. LayoutPaintTree stays near its previous cost. These are correctness/performance tradeoffs, not a claim of universal speed improvement.
+
+`TestDemoFrameAllocationBudget` checks the 1,100 allocs/op limit with `testing.AllocsPerRun`. Focused tests also check constant quad allocation, bounded paint allocation, allocation-free warm list-buffer reuse, and allocation-free idle wait results. The real-ioctl allocation test is opt-in via `NEFERGUI_RENDER_NODE`. The other table budgets are reference targets, not automated assertions.
 
 Frame construction limits allocation churn through:
 
@@ -39,7 +41,7 @@ Frame construction limits allocation churn through:
 
 `Run` builds a frame only on input or a redraw request. Idle frame construction stops. Expected release-wait timeouts return without constructing errors; real ioctl failures retain their context and wrapped errno.
 
-On the same implementation commit, measured **2026-09-30, 06:34 CEST**, `BenchmarkWaitPointIdle` on an unsignaled real DRM timeline took a median **21,370,548 ns/op, 0 B/op, 0 allocs/op**. This includes the requested 20 ms timeout, not active CPU time:
+On commit `9064a73`, measured **2026-09-30, 06:34 CEST**, `BenchmarkWaitPointIdle` on an unsignaled real DRM timeline took a median **21,370,548 ns/op, 0 B/op, 0 allocs/op**. This includes the requested 20 ms timeout, not active CPU time:
 
 ```sh
 NEFERGUI_RENDER_NODE=/dev/dri/renderD128 CGO_ENABLED=0 GOWORK=off \
@@ -54,6 +56,8 @@ go tool pprof -sample_index=alloc_objects -top -cum mem.out
 ```
 
 ## Memory as a dependency
+
+These external profiles use the earlier minimal and simplified demo fixtures, not the desktop document workspace measured above. They describe library allocation behavior at the pinned commit, not the current example's full memory footprint.
 
 Measured: **2026-09-30, 06:34–06:36 CEST (UTC+02:00)**. Measured commit: **`9064a730c898b48f967b3f2228fb705474b4fdeb`**. Comparison baseline: **`1488e4a390e93603976ae3f5e9ac3fdb1bd00c1a`**, measured **2026-09-30, 06:06–06:10 CEST**.
 
