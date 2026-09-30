@@ -1,49 +1,64 @@
 # NeferGUI
 
-Native immediate-mode GUI library for Go, built for Wayland with Vulkan rendering and CSS styling.
+A native Go GUI library for Linux: Wayland windows, Vulkan rendering, and CSS styling. Build your view from the current model; controls return events during that call. No cgo required.
 
-## Status
+> [!WARNING]
+> **Early development.** No release yet. Expect bugs and breaking changes. Platform accessibility is not connected.
 
-NeferGUI is under active development and has no release yet.
-
-## Usage
+## A small example
 
 ```go
-type Model struct{ Name, Status string }
+package main
 
-func view(f *nefergui.Frame, m *Model) {
-	root := f.Root(nefergui.Class("app"))
-	root.Input("Name", &m.Name, nefergui.Key("name"))
-	if root.Button("Greet", nefergui.Key("greet")).Activated() {
-		m.Status = "Hello " + m.Name
-	}
-	root.Text(m.Status)
-}
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/bnema/nefergui"
+)
 
 func main() {
-	var m Model
-	if err := nefergui.Run(context.Background(), &m, view, nefergui.Title("Hello"), nefergui.Size(640, 480), nefergui.Styles("app.css")); err != nil {
+	count := 0
+	view := func(f *nefergui.Frame, count *int) {
+		root := f.Root().Column()
+		root.Text("Hello, Wayland!")
+		if root.Button("Count", nefergui.Key("count")).Activated() {
+			*count++
+		}
+		root.Text(fmt.Sprintf("Clicked %d times", *count))
+	}
+	if err := nefergui.Run(context.Background(), &count, view,
+		nefergui.Title("Hello"), nefergui.Size(320, 200)); err != nil {
 		log.Fatal(err)
 	}
 }
 ```
 
-Runtime requirements: a Wayland compositor with linux-dmabuf and linux-drm-syncobj, `libvulkan.so.1` and `libxkbcommon.so.0`. Builds with `CGO_ENABLED=0`. See [docs/runtime.md](docs/runtime.md) and `examples/demo`.
+Default styles work without a stylesheet; `nefergui.Styles("app.css")` loads your own CSS.
+
+## Try it
+
+Requires Go 1.27, `libvulkan.so.1`, `libxkbcommon.so.0`, usable fonts, and a Wayland compositor supporting linux-dmabuf and linux-drm-syncobj. Fractional scaling also requires viewporter. No X11 or software-rendering fallback.
+
+```sh
+go get github.com/bnema/nefergui
+```
+
+From a checkout, run the [demo](examples/demo):
+
+```sh
+CGO_ENABLED=0 go run ./examples/demo
+```
 
 ## Documentation
 
+- [Controls](docs/controls.md) and [layout](docs/layout.md)
 - [CSS properties and limitations](docs/css.md)
-- [Layout](docs/layout.md) · [Controls](docs/controls.md) · [Runtime](docs/runtime.md)
-- [Troubleshooting](docs/troubleshooting.md) · [Harness](docs/harness.md) · [Performance](docs/performance.md)
-
-## Design records
-
-- [0002 Wayland bindings and FD ownership](docs/adr/0002-wayland-bindings-and-fd-ownership.md)
-- [0003 Vulkan presentation through DMA-BUF](docs/adr/0003-vulkan-dmabuf-presentation.md)
-- [0004 Keyboard interpretation](docs/adr/0004-keyboard.md)
-- [0005 Immediate-mode identity and events](docs/adr/0005-identity-and-events.md)
-- [0006 CSS and text scope](docs/adr/0006-css-and-text-scope.md)
+- [Runtime requirements and behavior](docs/runtime.md) and [troubleshooting](docs/troubleshooting.md)
+- [Visual test harness](docs/harness.md) and [performance](docs/performance.md)
+- [Architecture decisions](docs/adr)
 
 ## License
 
-NeferGUI is licensed under [GNU GPL v3](LICENSE). Third-party code and test fonts retain their licenses and attribution notices in their respective directories.
+[GNU GPL v3](LICENSE). Third-party code and test fonts retain their own licenses and attribution.

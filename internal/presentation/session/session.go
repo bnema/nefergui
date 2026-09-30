@@ -343,13 +343,6 @@ func (s *Session) TickList(instances []vkdevice.Instance, uploads []text.Upload)
 }
 
 func (s *Session) tick(rect *vkdevice.Rect, instances []vkdevice.Instance, uploads []text.Upload, batches []vkdevice.Batch) (bool, error) {
-	// Uploads were drained by Prepare. Restore them if this tick did not submit.
-	submitted := false
-	defer func() {
-		if !submitted && len(uploads) > 0 {
-			s.Preparer.Atlas.MarkAllDirty()
-		}
-	}()
 	started := time.Now()
 	if s.Window.Dirty {
 		w, h, err := s.Window.PhysicalSize()
@@ -402,7 +395,8 @@ func (s *Session) tick(rect *vkdevice.Rect, instances []vkdevice.Instance, uploa
 	if err = slot.Frame.Submit(slot.Wait); err != nil {
 		return false, err
 	}
-	submitted = true
+	// The render module keeps uploads owed until this acknowledgement.
+	s.Preparer.Submitted(uploads)
 	if slot.Wait != nil {
 		slot.WaitInFlight = true
 	}
@@ -677,8 +671,8 @@ func (s *Session) RunWithCommit(ctx context.Context, frames int, draw func(int) 
 	return s.runWithCommit(ctx, frames, func(i int) (bool, error) { return s.Tick(draw(i)) }, committed)
 }
 
-// RunPreparedListWithCommit prepares uploads on every attempt. A skipped
-// submission restores dirty pages, so the next attempt resends them.
+// RunPreparedListWithCommit prepares uploads on every attempt. Preparer keeps
+// them owed until a submission, so a skipped attempt is resent by the next one.
 func (s *Session) RunPreparedListWithCommit(ctx context.Context, frames int, draw func(int) (render.Frame, error), committed func(int) error) (int, error) {
 	if draw == nil {
 		return 0, fmt.Errorf("nil draw function")
@@ -690,7 +684,6 @@ func (s *Session) RunPreparedListWithCommit(ctx context.Context, frames int, dra
 		}
 		instances, batches, stats := render.ListBatches(frame)
 		if len(stats.Skipped) != 0 {
-			s.Preparer.Atlas.MarkAllDirty()
 			return false, fmt.Errorf("unsupported list operations: %v", stats.Skipped)
 		}
 		return s.tick(nil, instances, frame.Uploads, batches)

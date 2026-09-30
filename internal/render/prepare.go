@@ -38,7 +38,17 @@ type Frame struct {
 	Uploads []text.Upload
 }
 
-type Preparer struct{ Atlas *text.Atlas }
+// Preparer owns the glyph atlas and the obligation to deliver its changes to the
+// GPU mirror. Prepare hands the caller every change not yet known to be
+// submitted; Submitted is the only acknowledgement. A frame that is retried,
+// abandoned, superseded or never reached submission therefore never loses
+// atlas changes: the next Prepare resends whole pages (placements are kept).
+type Preparer struct {
+	Atlas *text.Atlas
+	// owed is true while the latest issued uploads have not been submitted.
+	owed   bool
+	issued []text.Upload
+}
 
 // NewPreparer bounds the grayscale glyph atlas. Call Prepare synchronously with
 // layout; the atlas and shaped faces are not safe for concurrent use.
@@ -172,8 +182,25 @@ func (p *Preparer) Prepare(commands []layout.Command, scale float64, width, heig
 	if len(stack) > 0 {
 		return Frame{}, fmt.Errorf("render: unbalanced clip-push")
 	}
+	if p.owed {
+		// The previous frame's uploads may never have reached the GPU. Full pages
+		// subsume them and any changes made since.
+		p.Atlas.MarkAllDirty()
+	}
 	frame.Uploads = p.Atlas.Uploads()
+	p.issued, p.owed = frame.Uploads, len(frame.Uploads) > 0
 	return frame, nil
+}
+
+// Submitted acknowledges that uploads, as returned in the most recent Prepare's
+// Frame.Uploads, were recorded in a successfully submitted GPU submission.
+// Any other slice (an older, superseded frame or foreign data) is ignored and
+// the latest frame's uploads stay owed. Call it on the Prepare owner's loop.
+func (p *Preparer) Submitted(uploads []text.Upload) {
+	if p == nil || len(uploads) == 0 || len(uploads) != len(p.issued) || &uploads[0] != &p.issued[0] {
+		return
+	}
+	p.owed, p.issued = false, nil
 }
 
 func opacity(c css.Color, a float64) css.Color {

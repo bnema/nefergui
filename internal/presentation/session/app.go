@@ -40,9 +40,7 @@ func (s *Session) RunApp(ctx context.Context, app AppHooks) error {
 	}
 	defer func() { s.waitCancel(); s.waiters.Wait() }()
 	wlEvents := s.Window.StartReader()
-	dirty := true
-	var prepared render.Frame
-	havePrepared := false
+	sched := newFrameSchedule()
 	for !s.Window.Closed {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -51,55 +49,40 @@ func (s *Session) RunApp(ctx context.Context, app AppHooks) error {
 		if err != nil {
 			return err
 		}
+		// Resize or scale change (also set before RunApp, or by the event case
+		// below): the prepared frame is stale until tick clears Window.Dirty.
 		if s.Window.Dirty {
-			dirty = true
+			sched.Invalidate()
 		}
 		if inputs := s.Window.DrainInput(nil); len(inputs) > 0 {
-			dirty = true
-			havePrepared = false
+			sched.Invalidate()
 			if app.Input != nil {
 				if err := app.Input(inputs); err != nil {
 					return err
 				}
 			}
 		}
-		if dirty && s.Window.FrameReady {
-			if !havePrepared {
-				frame, changed, err := app.Draw()
-				if err != nil {
+		committed, err := sched.Step(s.Window.FrameReady, app.Draw, func(prepared render.Frame) (bool, error) {
+			instances, batches, stats := render.ListBatches(prepared)
+			if len(stats.Skipped) != 0 {
+				return false, fmt.Errorf("unsupported list operations: %v", stats.Skipped)
+			}
+			return s.tick(nil, instances, prepared.Uploads, batches)
+		})
+		if err != nil {
+			return err
+		}
+		if committed {
+			if app.Committed != nil {
+				if err := app.Committed(s.frame); err != nil {
 					return err
 				}
-				if !changed {
-					dirty = false
-				} else {
-					prepared, havePrepared = frame, true
-				}
 			}
-			if havePrepared {
-				instances, batches, stats := render.ListBatches(prepared)
-				if len(stats.Skipped) != 0 {
-					s.Preparer.Atlas.MarkAllDirty()
-					return fmt.Errorf("unsupported list operations: %v", stats.Skipped)
-				}
-				ok, err := s.tick(nil, instances, prepared.Uploads, batches)
-				if err != nil {
-					return err
-				}
-				if ok {
-					dirty = false
-					havePrepared = false
-					if app.Committed != nil {
-						if err := app.Committed(s.frame); err != nil {
-							return err
-						}
-					}
-					continue
-				}
-			}
+			continue
 		}
 		var retry, repeat <-chan time.Time
-		if pending || s.framePending || (dirty && havePrepared && s.Window.FrameReady) {
-			retry = time.After(5 * time.Millisecond)
+		if sched.NeedsRetry(pending || s.framePending, s.Window.FrameReady) {
+			retry = time.After(retryInterval)
 		}
 		if adapter := s.Window.InputAdapter(); adapter != nil {
 			if at, ok := adapter.NextRepeat(); ok {
@@ -110,14 +93,12 @@ func (s *Session) RunApp(ctx context.Context, app AppHooks) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-app.Wake:
-			dirty = true
-			havePrepared = false
+			sched.Invalidate()
 		case <-retry:
 		case <-repeat:
 			if adapter := s.Window.InputAdapter(); adapter != nil {
 				if input, ok := adapter.Tick(time.Now()); ok {
-					dirty = true
-					havePrepared = false
+					sched.Invalidate()
 					if app.Input != nil {
 						if err := app.Input([]wayland.Input{input}); err != nil {
 							return err
@@ -140,10 +121,6 @@ func (s *Session) RunApp(ctx context.Context, app AppHooks) error {
 				if err := app.Event(ev); err != nil {
 					return err
 				}
-			}
-			if s.Window.Dirty {
-				dirty = true
-				havePrepared = false
 			}
 			// DrainInput is handled at the start of the next iteration.
 		case ev := <-s.releases:

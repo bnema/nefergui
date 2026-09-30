@@ -39,9 +39,11 @@ func BenchmarkPrepare(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	if _, err = p.Prepare(commands, 1, 960, 640); err != nil {
+	warm, err := p.Prepare(commands, 1, 960, 640)
+	if err != nil {
 		b.Fatal(err)
 	}
+	p.Submitted(warm.Uploads)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -49,5 +51,6 @@ func BenchmarkPrepare(b *testing.B) {
 		if err != nil || len(frame.Quads) == 0 {
 			b.Fatalf("prepare: %v", err)
 		}
+		p.Submitted(frame.Uploads)
 	}
 }

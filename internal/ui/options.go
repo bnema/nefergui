@@ -1,0 +1,74 @@
+package ui
+
+import "github.com/bnema/nefergui/internal/css"
+
+// ContainerOption, ButtonOption and EditOption are separate option families.
+type ContainerOption interface{ container(*element) }
+type ButtonOption interface{ button(*element) }
+type EditOption interface{ edit(*element) }
+
+// ValueOption accepts CSS options and Disabled for pointer-backed controls.
+type ValueOption interface{ valueOption(*element) }
+
+// CommonOption is the concrete type of Key, ID, Class and Inline; it belongs
+// to every option family. It is exported only so the root facade can return it.
+type CommonOption struct{ apply func(*element) }
+
+func (o CommonOption) container(e *element)   { o.apply(e) }
+func (o CommonOption) button(e *element)      { o.apply(e) }
+func (o CommonOption) edit(e *element)        { o.apply(e) }
+func (o CommonOption) valueOption(e *element) { o.apply(e) }
+func Key(key string) CommonOption {
+	return CommonOption{func(e *element) { e.identity = &identity{key: key} }}
+}
+func ID(id string) CommonOption { return CommonOption{func(e *element) { e.id = id }} }
+func Class(class string) CommonOption {
+	return CommonOption{func(e *element) { e.classes = append(e.classes, class) }}
+}
+func Inline(src string) CommonOption {
+	return CommonOption{func(e *element) { e.inline, _ = css.ParseInline(src) }}
+}
+func applyContainer(e *element, opts []ContainerOption) {
+	for _, o := range opts {
+		o.container(e)
+	}
+}
+
+// DisabledOption is the concrete type of Disabled. It applies to every
+// interactive control (buttons, value controls and editors) but not to
+// containers or headings. Exported only so the root facade can return it.
+type DisabledOption struct{ disabled bool }
+
+func (o DisabledOption) button(e *element)      { e.disabled = o.disabled }
+func (o DisabledOption) edit(e *element)        { e.disabled = o.disabled }
+func (o DisabledOption) valueOption(e *element) { e.disabled = o.disabled }
+
+// Disabled blocks focus and interaction on an interactive control.
+func Disabled(v bool) DisabledOption { return DisabledOption{v} }
+
+// HeadingOption accepts common CSS options and Level, but not control options.
+type HeadingOption interface{ heading(*element) }
+
+func (o CommonOption) heading(e *element) { o.apply(e) }
+
+type headingLevel int
+
+func (level headingLevel) heading(e *element) { e.level = int(level) }
+
+// Level sets the accessibility heading level (1 through 6).
+func Level(level int) HeadingOption {
+	if level < 1 || level > 6 {
+		panic("nefergui: heading level must be between 1 and 6")
+	}
+	return headingLevel(level)
+}
+
+type editOnly struct{ placeholder string }
+
+func (o editOnly) edit(e *element)    { e.placeholder = o.placeholder }
+func Placeholder(v string) EditOption { return editOnly{v} }
+
+type passwordOption bool
+
+func (o passwordOption) edit(e *element) { e.password = bool(o) }
+func Password(v bool) EditOption         { return passwordOption(v) }
