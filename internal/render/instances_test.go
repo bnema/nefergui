@@ -5,6 +5,7 @@ import (
 	"github.com/bnema/nefergui/internal/layout"
 	"github.com/bnema/nefergui/internal/text"
 	"image"
+	"reflect"
 	"testing"
 )
 
@@ -42,5 +43,72 @@ func TestListInstances(t *testing.T) {
 	}
 	if got[2].KindLayer != [4]float32{1, 2} || got[2].UV != [4]float32{10.0 / 1024, 20.0 / 1024, 14.0 / 1024, 26.0 / 1024} {
 		t.Fatalf("glyph=%+v", got[2])
+	}
+}
+
+func TestListBufferMatchesListBatches(t *testing.T) {
+	a := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	frames := []Frame{
+		listFixture(200),
+		{Quads: []Quad{{Op: "rect"}, {Op: "mystery"}, {Op: "image", Image: a}, {Op: "mystery"}, {Op: "glyph"}, {Op: "glyph"}}},
+		{},
+		listFixture(7),
+	}
+	var buf ListBuffer
+	for round := 0; round < 2; round++ {
+		for i, f := range frames {
+			wi, wb, ws := ListBatches(f)
+			gi, gb, gs := buf.List(f)
+			if !reflect.DeepEqual(wi, gi) || !reflect.DeepEqual(wb, gb) || !reflect.DeepEqual(ws, gs) {
+				t.Fatalf("round %d frame %d differs:\nwant %v %v %v\ngot  %v %v %v", round, i, len(wi), wb, ws, len(gi), gb, gs)
+			}
+		}
+	}
+}
+
+// A result stays valid until the next List; a later smaller frame must not
+// leave stale instances, batches, image references or skip counts visible.
+func TestListBufferReuseLifetime(t *testing.T) {
+	a := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	var buf ListBuffer
+	i1, b1, s1 := buf.List(Frame{Quads: []Quad{{Op: "rect"}, {Op: "image", Image: a}, {Op: "nope"}}})
+	if len(i1) != 2 || len(b1) != 2 || s1.Skipped["nope"] != 1 {
+		t.Fatalf("first: %v %v %v", i1, b1, s1)
+	}
+	i2, b2, s2 := buf.List(Frame{Quads: []Quad{{Op: "glyph"}}})
+	if len(i2) != 1 || len(b2) != 1 || b2[0].Source != nil || len(s2.Skipped) != 0 || i2[0].KindLayer[0] != 1 {
+		t.Fatalf("second: %v %v %v", i2, b2, s2)
+	}
+	buf.Release()
+	for _, batch := range b2[:cap(b2)] {
+		if batch.Source != nil {
+			t.Fatal("Release left an image reference")
+		}
+	}
+	// Results from the non-buffer API never alias the buffer.
+	fi, fb, _ := ListBatches(Frame{Quads: []Quad{{Op: "rect"}}})
+	buf.List(listFixture(50))
+	if fi[0].KindLayer != [4]float32{} || len(fb) != 1 || fb[0].Count != 1 {
+		t.Fatalf("ListBatches result aliased: %v %v", fi, fb)
+	}
+}
+
+func TestListBufferDropsOversizedStorage(t *testing.T) {
+	var buf ListBuffer
+	buf.List(listFixture(20000))
+	if _, _, _ = buf.List(listFixture(10)); cap(buf.instances) > 4*10+64 {
+		t.Fatalf("retained %d instances for 10 quads", cap(buf.instances))
+	}
+}
+
+func TestListBatchesAllocations(t *testing.T) {
+	frame := listFixture(2000)
+	if n := testing.AllocsPerRun(20, func() { ListBatches(frame) }); n > 4 {
+		t.Fatalf("ListBatches allocs=%v, want <= 4 (instances, batches, skipped map)", n)
+	}
+	var buf ListBuffer
+	buf.List(frame)
+	if n := testing.AllocsPerRun(20, func() { buf.List(frame) }); n != 0 {
+		t.Fatalf("ListBuffer.List allocs=%v, want 0 after warmup", n)
 	}
 }

@@ -74,6 +74,25 @@ func scaled(e layout.Edges, scale float64) layout.Edges {
 	return layout.Edges{Top: e.Top * scale, Right: e.Right * scale, Bottom: e.Bottom * scale, Left: e.Left * scale}
 }
 
+// quadCapacity is an upper bound on the quads Prepare can emit: one per glyph
+// and one per drawable command. Clipped-out primitives make it a slight
+// over-estimate, never an under-estimate, so appends do not reallocate.
+func quadCapacity(commands []layout.Command) int {
+	n := 0
+	for i := range commands {
+		switch cmd := &commands[i]; cmd.Op {
+		case "clip-push", "clip-pop":
+		case "text", "preedit-text":
+			for j := range cmd.Runs {
+				n += len(cmd.Runs[j].Glyphs)
+			}
+		default:
+			n++
+		}
+	}
+	return n
+}
+
 // Prepare converts logical rectangles once, using layout.Physical as the sole
 // logical-to-physical edge-rounding boundary. A clip-push intersects its parent
 // clip; rounded clips intentionally use only their axis-aligned bounds in V1.
@@ -86,6 +105,11 @@ func (p *Preparer) Prepare(commands []layout.Command, scale float64, width, heig
 	}
 	p.Atlas.BeginFrame()
 	frame := Frame{}
+	if n := quadCapacity(commands); n > 0 {
+		// Frames are returned detached and may outlive later Prepare calls, so
+		// the backing array is never reused; size it once instead of regrowing.
+		frame.Quads = make([]Quad, 0, n)
+	}
 	clip := layout.Rect{W: float64(width), H: float64(height)}
 	stack := []layout.Rect{}
 	for _, cmd := range commands {
