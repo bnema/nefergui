@@ -835,12 +835,7 @@ func countCommands(n *Node, r *Result) (c counts) {
 		total++
 	}
 	if n.Kind == Text {
-		for i := range r.Lines {
-			c.runs += len(r.Lines[i].Runs)
-			for j := range r.Lines[i].Runs {
-				c.glyphs += len(r.Lines[i].Runs[j].Glyphs)
-			}
-		}
+		c.runs, c.glyphs = textCounts(r)
 	}
 	j := 0
 	for _, child := range n.Children {
@@ -861,6 +856,16 @@ func countCommands(n *Node, r *Result) (c counts) {
 }
 
 type counts struct{ commands, shadows, runs, glyphs int }
+
+func textCounts(r *Result) (runs, glyphs int) {
+	for i := range r.Lines {
+		runs += len(r.Lines[i].Runs)
+		for j := range r.Lines[i].Runs {
+			glyphs += len(r.Lines[i].Runs[j].Glyphs)
+		}
+	}
+	return runs, glyphs
+}
 
 func (c context) paint(n *Node, r *Result, out *[]Command) {
 	if r == nil {
@@ -936,13 +941,7 @@ func (c context) paint(n *Node, r *Result, out *[]Command) {
 		cmd.Rect = r.Content
 		cmd.Text = n.Content
 		cmd.Color = s.Color
-		runs, glyphs := 0, 0
-		for i := range r.Lines {
-			runs += len(r.Lines[i].Runs)
-			for j := range r.Lines[i].Runs {
-				glyphs += len(r.Lines[i].Runs[j].Glyphs)
-			}
-		}
+		runs, glyphs := textCounts(r)
 		cmd.Runs = c.runs.take(runs)
 		backing := c.glyphs.take(glyphs)
 		for _, line := range r.Lines {

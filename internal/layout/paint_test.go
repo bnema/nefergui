@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"image"
 	"reflect"
 	"testing"
 
@@ -104,6 +105,13 @@ func TestPaintRunAndGlyphCapacityIsolated(t *testing.T) {
 // guarantee silently degrades.
 func TestPaintCountsMatch(t *testing.T) {
 	root, opts := paintFixture(t, 10)
+	root.Children = append(root.Children,
+		nil,
+		&Node{ID: "hidden", Kind: Text, Content: "hidden", Style: &css.Style{Display: css.KeywordNone}},
+		&Node{ID: "image", Kind: Image, Image: image.NewRGBA(image.Rect(0, 0, 2, 2)), Style: &css.Style{Display: css.KeywordBlock, Width: px(20), Height: px(20)}},
+		&Node{ID: "outline", Kind: Box, Style: &css.Style{Display: css.KeywordBlock, Width: px(20), Height: px(20), OutlineStyle: css.KeywordSolid, OutlineWidth: px(2)}},
+		&Node{ID: "radius", Kind: Box, Style: &css.Style{Display: css.KeywordBlock, Width: px(20), Height: px(20), BorderRadius: css.Radii{TopLeft: px(2)}}},
+	)
 	ctx := context{options: opts}
 	tree, err := ctx.place(root, 0, 0, opts.Width, opts.Height, nil, nil, 0)
 	if err != nil {

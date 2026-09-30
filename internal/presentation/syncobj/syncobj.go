@@ -75,8 +75,10 @@ func (n *Node) Close() error {
 }
 
 // ioctlErrno performs the ioctl and returns the raw errno without allocating.
-// arg must stay reachable by the caller until this returns (callers use
-// runtime.KeepAlive when arg embeds uintptr-encoded pointers).
+// Embedded addresses must not move: no split-checked call may occur between
+// encoding them and the syscall. KeepAlive alone does not prevent stack moves.
+//
+//go:nosplit
 func (n *Node) ioctlErrno(request uintptr, arg unsafe.Pointer) unix.Errno {
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(n.fd), request, uintptr(arg))
 	return errno
@@ -216,11 +218,11 @@ func (n *Node) Query(handle uint32) (uint64, error) {
 	h := handle
 	var point uint64
 	a := queryArg{Handles: uint64(uintptr(unsafe.Pointer(&h))), Points: uint64(uintptr(unsafe.Pointer(&point))), Count: 1}
-	err := n.ioctl(ioctlQuery, unsafe.Pointer(&a))
+	errno := n.ioctlErrno(ioctlQuery, unsafe.Pointer(&a))
 	runtime.KeepAlive(h)
 	runtime.KeepAlive(point)
-	if err != nil {
-		return 0, err
+	if errno != 0 {
+		return 0, ioctlError(ioctlQuery, errno)
 	}
 	return point, nil
 }

@@ -74,9 +74,12 @@ func scaled(e layout.Edges, scale float64) layout.Edges {
 	return layout.Edges{Top: e.Top * scale, Right: e.Right * scale, Bottom: e.Bottom * scale, Left: e.Left * scale}
 }
 
-// quadCapacity is an upper bound on the quads Prepare can emit: one per glyph
-// and one per drawable command. Clipped-out primitives make it a slight
-// over-estimate, never an under-estimate, so appends do not reallocate.
+// maxQuadPrealloc bounds speculative storage for mostly clipped documents.
+// Visible frames larger than this grow normally as their quads are emitted.
+const maxQuadPrealloc = 2048
+
+// quadCapacity estimates one quad per glyph and drawable command, capped so
+// offscreen content cannot force a large allocation before culling.
 func quadCapacity(commands []layout.Command) int {
 	n := 0
 	for i := range commands {
@@ -90,7 +93,7 @@ func quadCapacity(commands []layout.Command) int {
 			n++
 		}
 	}
-	return n
+	return min(n, maxQuadPrealloc)
 }
 
 // Prepare converts logical rectangles once, using layout.Physical as the sole
@@ -107,7 +110,8 @@ func (p *Preparer) Prepare(commands []layout.Command, scale float64, width, heig
 	frame := Frame{}
 	if n := quadCapacity(commands); n > 0 {
 		// Frames are returned detached and may outlive later Prepare calls, so
-		// the backing array is never reused; size it once instead of regrowing.
+		// the backing array is never reused. Bound the initial reservation;
+		// larger visible frames grow through append after culling.
 		frame.Quads = make([]Quad, 0, n)
 	}
 	clip := layout.Rect{W: float64(width), H: float64(height)}
