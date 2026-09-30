@@ -6,7 +6,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/platform/wayland"
 	"github.com/bnema/nefergui/internal/render"
 )
 
@@ -61,25 +60,32 @@ func TestScheduleBlockedFrameKeepsPreparedAndRetries(t *testing.T) {
 	}
 }
 
-func TestScheduleInvalidateDropsPreparedFrame(t *testing.T) {
-	for _, name := range []string{"wake or input", "resize"} {
-		t.Run(name, func(t *testing.T) {
-			h := newHarness(t)
-			h.blocked = true
-			h.step()
-			if name == "resize" {
-				// RunApp invalidates at the top of each iteration while Window.Dirty is set.
-				w := &wayland.Window{}
-				if err := w.Apply(wayland.Event{Kind: wayland.ConfigureSize, Width: 640, Height: 480}); err != nil || !w.Dirty {
-					t.Fatalf("configure did not dirty window: %v", err)
-				}
-			}
-			h.s.Invalidate()
-			h.blocked = false
-			if !h.step() || h.draws != 2 || h.submits[len(h.submits)-1] != 2 {
-				t.Fatalf("stale frame submitted: draws=%d submits=%v", h.draws, h.submits)
-			}
-		})
+func TestScheduleInvalidateReplacesChangedFrame(t *testing.T) {
+	h := newHarness(t)
+	h.blocked = true
+	h.step()
+	h.s.Invalidate()
+	h.blocked = false
+	if !h.step() || h.draws != 2 || h.submits[len(h.submits)-1] != 2 {
+		t.Fatalf("stale frame submitted: draws=%d submits=%v", h.draws, h.submits)
+	}
+}
+
+func TestScheduleNoOpInputKeepsUnsubmittedFrame(t *testing.T) {
+	h := newHarness(t)
+	h.blocked = true
+	h.step()
+	h.s.Invalidate()
+	h.changed = false
+	if h.step() || h.draws != 2 || h.submits[len(h.submits)-1] != 1 {
+		t.Fatalf("no-op lost held frame: draws=%d submits=%v", h.draws, h.submits)
+	}
+	h.blocked = false
+	if !h.step() || h.draws != 2 || h.submits[len(h.submits)-1] != 1 {
+		t.Fatalf("release lost held frame: draws=%d submits=%v", h.draws, h.submits)
+	}
+	if h.s.NeedsRetry(false, true) {
+		t.Fatal("committed schedule did not go idle")
 	}
 }
 
@@ -136,12 +142,12 @@ func TestSchedulePendingGPUForcesRetry(t *testing.T) {
 func TestScheduleErrorsPropagate(t *testing.T) {
 	h := newHarness(t)
 	h.drawErr = errors.New("draw")
-	if _, err := h.s.Step(true, func() (render.Frame, bool, error) { return render.Frame{}, false, h.drawErr }, nil); err != h.drawErr {
+	if _, err := h.s.Step(true, func() (render.Frame, bool, error) { return render.Frame{}, false, h.drawErr }, nil); !errors.Is(err, h.drawErr) {
 		t.Fatalf("draw err = %v", err)
 	}
 	h.drawErr = nil
 	h.submitErr = errors.New("submit")
-	if ok, err := h.s.Step(true, func() (render.Frame, bool, error) { return render.Frame{}, true, nil }, func(render.Frame) (bool, error) { return true, h.submitErr }); ok || err != h.submitErr {
+	if ok, err := h.s.Step(true, func() (render.Frame, bool, error) { return render.Frame{}, true, nil }, func(render.Frame) (bool, error) { return true, h.submitErr }); ok || !errors.Is(err, h.submitErr) {
 		t.Fatalf("submit error: ok=%v err=%v", ok, err)
 	}
 }

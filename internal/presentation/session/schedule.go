@@ -15,28 +15,29 @@ const retryInterval = 5 * time.Millisecond
 // frameSchedule is RunApp's frame state, touched only from the owner loop.
 // A frame is wanted (dirty) until the compositor accepted a commit or the app
 // reported no change. A prepared display list is kept across blocked submits so
-// a retry does not call Draw again, and it is dropped whenever input, a wake, a
-// resize or a scale change makes it stale.
+// a retry does not call Draw again. Input, a wake, resize or scale changes ask
+// Draw for a replacement; an unchanged draw retains the unsubmitted frame.
 type frameSchedule struct {
 	dirty    bool
 	prepared render.Frame
 	have     bool
+	stale    bool
 }
 
 // newFrameSchedule starts dirty so the first configured frame is drawn.
 func newFrameSchedule() *frameSchedule { return &frameSchedule{dirty: true} }
 
-// Invalidate records that the UI or surface changed: draw again, and never
-// submit a previously prepared frame.
+// Invalidate asks Draw to refresh the UI before submitting. Keep any held
+// frame until Draw actually replaces it: no-op input must not lose a frame.
 func (f *frameSchedule) Invalidate() {
 	f.dirty = true
-	f.have = false
-	f.prepared = render.Frame{}
+	f.stale = true
 }
 
 // Step attempts one frame. Nothing is drawn unless a frame is wanted and the
-// compositor allows one (ready). Draw runs only when no prepared frame is held;
-// an unchanged draw clears dirty. submit reports whether the frame was
+// compositor allows one (ready). Draw runs when no frame is held or it is
+// stale; an unchanged draw keeps a held frame, or goes idle without one.
+// submit reports whether the frame was
 // committed: on false the prepared frame is kept for the next attempt, on true
 // the schedule is clean until the next Invalidate.
 func (f *frameSchedule) Step(
@@ -47,22 +48,24 @@ func (f *frameSchedule) Step(
 	if !f.dirty || !ready {
 		return false, nil
 	}
-	if !f.have {
+	if !f.have || f.stale {
 		frame, changed, err := draw()
 		if err != nil {
 			return false, err
 		}
-		if !changed {
+		f.stale = false
+		if changed {
+			f.prepared, f.have = frame, true
+		} else if !f.have {
 			f.dirty = false
 			return false, nil
 		}
-		f.prepared, f.have = frame, true
 	}
 	committed, err = submit(f.prepared)
 	if err != nil || !committed {
 		return false, err
 	}
-	f.dirty, f.have, f.prepared = false, false, render.Frame{}
+	f.dirty, f.have, f.stale, f.prepared = false, false, false, render.Frame{}
 	return true, nil
 }
 

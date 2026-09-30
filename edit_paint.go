@@ -54,10 +54,7 @@ func editorDecoration(s *edit.State, n *layout.Result, display []layout.Command,
 	lines := geometry.lines
 	var result []layout.Command
 	for i, line := range lines {
-		h := 0.0
-		if i < len(n.Lines) {
-			h = geometry.lineHeight(i)
-		}
+		h := geometry.lineHeight(i)
 		for j := 0; j+1 < len(line); j += 2 {
 			a, b := line[j], line[j+1]
 			if a.byteOffset == b.byteOffset {
@@ -77,8 +74,8 @@ func editorDecoration(s *edit.State, n *layout.Result, display []layout.Command,
 		}
 	}
 	if focused {
-		// Selection and caret share the geometry's caret policy: the trailing
-		// edge of the preceding character wins over a later duplicate offset.
+		// The caret uses the preceding character's trailing edge when an
+		// offset has several visual positions.
 		point, found := geometry.caret(s.Cursor)
 		if !found && len(lines) == 0 {
 			result = append(result, layout.Command{Op: "caret", ID: n.ID, Rect: layout.Rect{X: n.Content.X, Y: n.Content.Y, W: 1, H: n.Content.H}, Color: caretColor, Opacity: 1})
