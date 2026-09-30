@@ -35,6 +35,8 @@ const (
 	FeedbackFormats
 	ClipboardInput
 	IMEInput
+	// ConfigureLayer carries a layer-surface extent; zero axes are unchanged.
+	ConfigureLayer
 )
 
 type Event struct {
@@ -116,10 +118,21 @@ func (w *Window) Apply(ev Event) error {
 			w.Width, w.Height, w.Dirty = ev.Width, ev.Height, true
 		}
 	case ConfigureSerial:
-		if err := w.XdgSurface.AckConfigure(ev.Serial); err != nil {
+		var err error
+		switch {
+		case w.LayerSurface != nil:
+			err = w.LayerSurface.AckConfigure(ev.Serial)
+		case w.XdgSurface != nil:
+			err = w.XdgSurface.AckConfigure(ev.Serial)
+		default:
+			err = fmt.Errorf("configure without a shell surface")
+		}
+		if err != nil {
 			return err
 		}
 		w.Configured, w.FrameReady = true, true
+	case ConfigureLayer:
+		w.applyLayerSize(ev.Width, ev.Height)
 	case PreferredScale:
 		if ev.Scale == 0 {
 			return fmt.Errorf("invalid preferred scale zero")

@@ -48,7 +48,8 @@ func TestScheduleBlockedFrameKeepsPreparedAndRetries(t *testing.T) {
 		t.Fatalf("blocked: draws=%d retry=%v", h.draws, h.s.NeedsRetry(false, true))
 	}
 	// Retries resubmit the same prepared frame without redrawing.
-	if h.step() || h.step() || h.draws != 1 || len(h.submits) != 3 || h.submits[2] != 1 {
+	firstRetry, secondRetry := h.step(), h.step()
+	if firstRetry || secondRetry || h.draws != 1 || len(h.submits) != 3 || h.submits[2] != 1 {
 		t.Fatalf("retry redrew: draws=%d submits=%v", h.draws, h.submits)
 	}
 	h.blocked = false

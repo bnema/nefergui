@@ -34,24 +34,27 @@ type inputEvent struct {
 // runtime serializes frame construction; Queue and Redraw may be called concurrently.
 // Re-entrant or concurrent Build requests a follow-up redraw instead of waiting.
 type runtime struct {
-	buildMu              sync.Mutex
-	mu                   sync.Mutex
-	pending              []inputEvent
-	wake                 chan struct{}
-	generation           uint64
-	committed            *element
-	styles               *css.Engine
-	output               layout.Output
-	state                interactionState
-	width, height, scale float64
-	textEngine           *text.Engine
-	edits                map[string]*edit.State
-	clipboard            edit.Clipboard
-	pasteCtx             context.Context
-	pasteCancel          context.CancelFunc
-	pasteID              uint64
-	ime                  edit.IME
-	redraw               bool
+	buildMu               sync.Mutex
+	mu                    sync.Mutex
+	pending               []inputEvent
+	wake                  chan struct{}
+	generation            uint64
+	committed             *element
+	styles                *css.Engine
+	output                layout.Output
+	state                 interactionState
+	width, height, scale  float64
+	textEngine            *text.Engine
+	edits                 map[string]*edit.State
+	clipboard             edit.Clipboard
+	pasteCtx              context.Context
+	pasteCancel           context.CancelFunc
+	pasteID               uint64
+	ime                   edit.IME
+	redraw                bool
+	inputRects            []Rect
+	inputOut              []wayland.Rect
+	inputNil, inputStaged bool
 }
 
 func newRuntime() *runtime {
@@ -125,8 +128,9 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	gen := r.generation
 	previous := r.committed
 	state := r.state
+	width, height := r.width, r.height
 	r.mu.Unlock()
-	f := &Frame{generation: gen, active: true, events: events, previous: previous, styles: r.styles, state: state, edits: r.edits, clipboard: r.clipboard, ime: r.ime, layout: r.output, owner: r}
+	f := &Frame{width: width, height: height, generation: gen, active: true, events: events, previous: previous, styles: r.styles, state: state, edits: r.edits, clipboard: r.clipboard, ime: r.ime, layout: r.output, owner: r}
 	defer func() {
 		f.active = false
 		r.styles.EndFrame()
@@ -304,13 +308,27 @@ func runWithCommit[T any](ctx context.Context, model *T, view func(*Frame, *T), 
 		return errors.New("nefergui: no usable fonts")
 	}
 	r.setTextEngine(text.NewEngine(catalog))
-	s, err := session.Open("", int32(cfg.width), int32(cfg.height), cfg.transparent)
+	var surface wayland.SurfaceOptions
+	if cfg.layer != nil {
+		if surface, err = cfg.layer.surfaceOptions(); err != nil {
+			return err
+		}
+	}
+	s, err := session.OpenWithOptions(ctx, "", int32(cfg.width), int32(cfg.height), cfg.transparent, surface)
 	if err != nil {
 		return fmt.Errorf("nefergui: open platform: %w", err)
 	}
 	// Close errors (debug artifact writes) are reported after any earlier error.
 	defer func() { err = errors.Join(err, s.Close()) }()
-	if err := s.Window.Toplevel.SetTitle(cfg.title); err != nil {
+	if cfg.onSurface != nil {
+		if err := startupHook(ctx, cfg.onSurface, WaylandSurface{Display: s.Window.Display, Surface: s.Window.Surface}); err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
+			return fmt.Errorf("nefergui: surface hook: %w", err)
+		}
+	}
+	if err := s.Window.SetTitle(cfg.title); err != nil { // no-op for layer surfaces
 		return fmt.Errorf("nefergui: title: %w", err)
 	}
 	r.pasteCtx = ctx
@@ -346,6 +364,10 @@ func runWithCommit[T any](ctx context.Context, model *T, view func(*Frame, *T), 
 	}
 	loopCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	if cfg.wake != nil {
+		go r.forwardWake(loopCtx, cfg.wake)
+	}
+	hooks := &inputHooks{onInput: cfg.onInput, onResize: cfg.onResize}
 	finished := false
 	err = s.RunApp(loopCtx, session.AppHooks{
 		Wake: r.wake,
@@ -358,6 +380,9 @@ func runWithCommit[T any](ctx context.Context, model *T, view func(*Frame, *T), 
 					s.Window.PointerEntered(input.Serial, input.PointerGen)
 				case input.Kind == "leave":
 					s.Window.PointerLeft()
+				}
+				if hooks.input(input) { // raw hook first; controls still route the event
+					r.Redraw()
 				}
 				r.routeInput(input)
 			}
@@ -397,6 +422,9 @@ func runWithCommit[T any](ctx context.Context, model *T, view func(*Frame, *T), 
 			return nil
 		},
 		Draw: func() (render.Frame, bool, error) {
+			if hooks.resize(int(s.Window.Width), int(s.Window.Height), s.Window.Scale) {
+				r.Redraw() // an OnResize callback may have changed the model
+			}
 			r.route(platformInput{Kind: "resize", Width: float64(s.Window.Width), Height: float64(s.Window.Height), Scale: s.Window.Scale})
 			if !r.Build(func(f *Frame) { view(f, model) }) {
 				return render.Frame{}, false, nil
@@ -412,6 +440,9 @@ func runWithCommit[T any](ctx context.Context, model *T, view func(*Frame, *T), 
 			}
 			if ime != nil && ime.Err != nil {
 				return render.Frame{}, false, ime.Err
+			}
+			if err := r.applyInputRects(s.Window.StageInputRects); err != nil {
+				return render.Frame{}, false, err
 			}
 			if err := s.Window.SetCursor(cursorShape(r.cursor())); err != nil {
 				return render.Frame{}, false, err
@@ -435,6 +466,11 @@ type windowConfig struct {
 	title, styles string
 	width, height int
 	transparent   bool
+	layer         *LayerConfig
+	onInput       func(InputEvent) bool
+	onResize      func(int, int, float64)
+	wake          <-chan struct{}
+	onSurface     func(context.Context, WaylandSurface) error
 }
 type windowOption func(*windowConfig)
 

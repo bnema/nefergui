@@ -105,6 +105,11 @@ type Node struct {
 	ScrollX, ScrollY float64
 	NoWrap           bool // measure text at unbounded width; useful for single-line editors
 	EditorScroll     bool // clip and clamp own text on both axes, without child scrolling
+	// Rect, when HasRect is set on a direct child of a Stack, is the child's
+	// border-box geometry relative to the Stack's content box. It replaces the
+	// child's authored width, height and margin; it is ignored elsewhere.
+	Rect    Rect
+	HasRect bool
 }
 
 // Result is a detached layout snapshot. Style is deliberately not retained.
@@ -310,6 +315,12 @@ func (c context) intrinsicDepth(n *Node, w float64, depth int) (Size, []text.Lin
 	count := 0
 	for _, child := range n.Children {
 		if child == nil || style(child).Display == css.KeywordNone {
+			continue
+		}
+		if n.Kind == Stack && child.HasRect {
+			size.W = math.Max(size.W, safe(child.Rect.X+child.Rect.W))
+			size.H = math.Max(size.H, safe(child.Rect.Y+child.Rect.H))
+			count++
 			continue
 		}
 		cs := style(child)
@@ -530,7 +541,18 @@ func (c context) children(n *Node, r *Result, s css.Style, depth int) error {
 		if ch == nil {
 			continue
 		}
-		child, err := c.place(ch, r.Content.X, y, r.Content.W, r.Content.H, nil, nil, depth+1)
+		var child *Result
+		var err error
+		absolute := n.Kind == Stack && ch.HasRect
+		if absolute {
+			// Direct geometry: forced border-box size, and the origin is offset
+			// by the resolved margin so the border box lands exactly at Rect.
+			w, h := safe(ch.Rect.W), safe(ch.Rect.H)
+			m := edges(style(ch).Margin, r.Content.W)
+			child, err = c.place(ch, coord(r.Content.X+ch.Rect.X-m.Left), coord(r.Content.Y+ch.Rect.Y-m.Top), r.Content.W, r.Content.H, &w, &h, depth+1)
+		} else {
+			child, err = c.place(ch, r.Content.X, y, r.Content.W, r.Content.H, nil, nil, depth+1)
+		}
 		if err != nil {
 			return err
 		}
@@ -538,6 +560,9 @@ func (c context) children(n *Node, r *Result, s css.Style, depth int) error {
 			continue
 		}
 		cw, chh := envelope(child)
+		if absolute {
+			cw, chh = safe(ch.Rect.X+ch.Rect.W), safe(ch.Rect.Y+ch.Rect.H)
+		}
 		r.Children = append(r.Children, child)
 		r.ContentSize.W = math.Max(r.ContentSize.W, cw)
 		if n.Kind == Stack {

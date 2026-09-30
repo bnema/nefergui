@@ -543,3 +543,38 @@ func TestDirectionalTextAlignment(t *testing.T) {
 		}
 	}
 }
+
+func TestStackAbsoluteRect(t *testing.T) {
+	margin := css.Style{Display: css.KeywordBlock, Margin: css.LengthSides{Top: px(7), Left: px(9)}, Width: px(500), Height: px(500)}
+	a := node("a", Box, margin)
+	a.Rect, a.HasRect = Rect{X: 10.5, Y: 20, W: 30, H: 40}, true
+	flow := node("flow", Box, css.Style{Display: css.KeywordBlock, Height: px(12)})
+	stack := node("s", Stack, css.Style{Display: css.KeywordBlock, Padding: css.LengthSides{Top: px(3), Left: px(5)}}, a, flow)
+	out, err := Layout(node("root", Column, css.Style{Display: css.KeywordBlock}, stack), Options{Width: 200, Height: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kids := out.Tree.Children[0].Children
+	// Rect is border-box relative to the stack content box; authored size and margin do not apply.
+	if got, want := kids[0].Border, (Rect{X: 5 + 10.5, Y: 3 + 20, W: 30, H: 40}); got != want {
+		t.Fatalf("absolute border %+v want %+v", got, want)
+	}
+	// Non-Rect children keep normal stack placement at the content origin.
+	if got := kids[1].Border; got.X != 5 || got.Y != 3 || got.H != 12 {
+		t.Fatalf("flow child %+v", got)
+	}
+	// The stack's auto size covers the absolute child's extent.
+	if got := out.Tree.Children[0].ContentSize; got.W < 40.5 || got.H < 60 {
+		t.Fatalf("content size %+v", got)
+	}
+	// HasRect is ignored outside a Stack.
+	b := node("b", Box, css.Style{Display: css.KeywordBlock, Height: px(9)})
+	b.Rect, b.HasRect = Rect{X: 50, Y: 50, W: 5, H: 5}, true
+	out, err = Layout(node("col", Column, css.Style{Display: css.KeywordBlock}, b), Options{Width: 200, Height: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Tree.Children[0].Border; got.X != 0 || got.H != 9 {
+		t.Fatalf("Rect leaked outside Stack: %+v", got)
+	}
+}

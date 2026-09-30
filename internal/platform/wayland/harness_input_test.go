@@ -29,7 +29,7 @@ func TestHarnessInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), "artifacts")
-	result, code := harness.Run(context.Background(), harness.Options{Size: "400x300", Scale: "1", Layout: "us", Background: "#111111", Out: root, Input: script, Timeout: 25 * time.Second, ReadyTimeout: 8 * time.Second, Client: []string{os.Args[0], "-test.run=^TestHarnessInputClient$", "-test.v"}})
+	result, code := harness.Run(context.Background(), harness.Options{Size: "400x300", Scale: "1", Layout: "us", Background: "#111111", Out: root, AllowUnpinned: os.Getenv("NEFERGUI_NEFERWL") != "", Input: script, Timeout: 25 * time.Second, ReadyTimeout: 8 * time.Second, Client: []string{os.Args[0], "-test.run=^TestHarnessInputClient$", "-test.v"}})
 	if code != harness.Pass {
 		t.Fatalf("harness code=%d status=%s error=%s artifacts=%s", code, result.Status, result.Error, root)
 	}
