@@ -76,7 +76,7 @@ func scaled(e layout.Edges, scale float64) layout.Edges {
 
 // maxQuadPrealloc bounds speculative storage for mostly clipped documents.
 // Visible frames larger than this grow normally as their quads are emitted.
-const maxQuadPrealloc = 2048
+const maxQuadPrealloc = 512
 
 // quadCapacity estimates one quad per glyph and drawable command, capped so
 // offscreen content cannot force a large allocation before culling.

@@ -187,7 +187,8 @@ func (n *Node) WaitPoint(handle uint32, point uint64, timeout time.Duration) (bo
 	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &now); err != nil {
 		return false, err
 	}
-	a := timelineWaitArg{Handles: uint64(uintptr(unsafe.Pointer(&h))), Points: uint64(uintptr(unsafe.Pointer(&p))), TimeoutNS: now.Nano() + timeout.Nanoseconds(), Count: 1, Flags: 2}
+	deadline := now.Nano() + timeout.Nanoseconds()
+	a := timelineWaitArg{Handles: uint64(uintptr(unsafe.Pointer(&h))), Points: uint64(uintptr(unsafe.Pointer(&p))), TimeoutNS: deadline, Count: 1, Flags: 2}
 	errno := n.ioctlErrno(ioctlTimelineWait, unsafe.Pointer(&a))
 	runtime.KeepAlive(h)
 	runtime.KeepAlive(p)
