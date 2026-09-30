@@ -63,8 +63,8 @@ func TestDemoStatic(t *testing.T) {
 				x, y int
 				want color.NRGBA
 			}{
-				{"background", 5, 5, color.NRGBA{245, 247, 250, 255}},
-				{"button", 110, 390, color.NRGBA{117, 148, 201, 255}},
+				{"background", 5, 5, color.NRGBA{255, 255, 255, 255}},
+				{"button", 740, 185, color.NRGBA{212, 212, 216, 255}},
 			} {
 				x, y := p.x*scale, p.y*scale
 				t.Logf("%s (%d,%d)=%v", p.name, x, y, color.NRGBAModel.Convert(img.At(x, y)))
@@ -81,10 +81,10 @@ func TestDemoStatic(t *testing.T) {
 				x0, y0, x1, y1 int
 				fill           color.NRGBA
 			}{
-				{"Continuer", 110, 360, 222, 380, color.NRGBA{117, 148, 201, 255}},      // disabled primary
-				{"Accueil", 48, 88, 108, 114, color.NRGBA{143, 166, 207, 255}},          // active menu item
-				{"Thème sombre", 60, 126, 200, 152, color.NRGBA{218, 229, 245, 255}},    // header, right of the checkbox indicator
-				{"Ada placeholder", 68, 290, 180, 318, color.NRGBA{241, 245, 252, 255}}, // input
+				{"Apply", 810, 177, 866, 198, color.NRGBA{212, 212, 216, 255}},
+				{"Untitled.txt", 24, 113, 115, 136, color.NRGBA{228, 228, 231, 255}},
+				{"Dark mode", 850, 14, 935, 35, color.NRGBA{255, 255, 255, 255}},
+				{"Name placeholder", 749, 130, 840, 152, color.NRGBA{250, 250, 250, 255}},
 			} {
 				n, total := ink(img, l.x0*scale, l.y0*scale, l.x1*scale, l.y1*scale, l.fill)
 				if n < 40*scale*scale || n > total/2 {
@@ -125,7 +125,7 @@ func TestDemoCursorShapes(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "input.txt")
 	// Same cold-start allowance as TestDemoInputAndResources: the script
 	// starts at compositor launch, not when the demo maps.
-	if err := os.WriteFile(script, []byte("sleep 8s\nmove 180 102\nsleep 1s\nmove 150 310\nsleep 1s\nmove 600 500\nsleep 1s\n"), 0600); err != nil {
+	if err := os.WriteFile(script, []byte("sleep 8s\nmove 80 123\nsleep 1s\nmove 800 140\nsleep 1s\nmove 100 580\nsleep 1s\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	res := runDemo(t, bin, 1, 400, script, 12*time.Second)
@@ -155,7 +155,7 @@ func TestDemoInputAndResources(t *testing.T) {
 	// wait past cold start (font discovery) before injecting input. The demo
 	// keeps presenting for 12 s so the run outlasts the ~10 s script however
 	// fast frames render.
-	if err := os.WriteFile(script, []byte("sleep 8s\nmove 120 310\nsleep 200ms\nclick left\nsleep 200ms\ntype Ada\nsleep 200ms\nmove 130 390\nsleep 200ms\nclick left\nsleep 1s\n"), 0600); err != nil {
+	if err := os.WriteFile(script, []byte("sleep 8s\nmove 800 140\nsleep 200ms\nclick left\nsleep 200ms\ntype Example\nsleep 200ms\nmove 820 186\nsleep 200ms\nclick left\nsleep 1s\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	res := runDemo(t, bin, 1, 400, script, 12*time.Second)
@@ -167,7 +167,7 @@ func TestDemoInputAndResources(t *testing.T) {
 	if err = json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.Name != "Ada" || state.Status != "Bonjour Ada" {
+	if state.Name != "Example" || state.Status != "Author set to Example · session only" {
 		layout, _ := os.ReadFile(filepath.Join(res.Artifacts["debug"], "layout.json"))
 		t.Fatalf("state %+v layout=%s", state, layout)
 	}
@@ -186,7 +186,7 @@ func TestDemoInputAndResources(t *testing.T) {
 	}
 }
 
-// TestDemoIndicators opens the settings page, selects the second radio and
+// TestDemoIndicators returns to the editor, selects the second radio and
 // clicks the slider track, then checks the model and the painted indicators
 // in the captured frame: the selected radio and the slider fill up to the
 // thumb use the accent color, the rest of the track does not.
@@ -195,7 +195,7 @@ func TestDemoIndicators(t *testing.T) {
 	bin := demoBinary(t)
 	script := filepath.Join(t.TempDir(), "input.txt")
 	// Same cold-start allowance as TestDemoInputAndResources.
-	if err := os.WriteFile(script, []byte("sleep 8s\nmove 180 102\nsleep 200ms\nclick left\nsleep 800ms\nmove 74 311\nsleep 200ms\nclick left\nsleep 500ms\nmove 274 371\nsleep 200ms\nclick left\nsleep 300ms\nmove 700 560\nsleep 1s\n"), 0600); err != nil {
+	if err := os.WriteFile(script, []byte("sleep 8s\nmove 80 166\nsleep 200ms\nclick left\nsleep 800ms\nmove 80 123\nsleep 200ms\nclick left\nsleep 500ms\nmove 800 312\nsleep 200ms\nclick left\nsleep 300ms\nmove 883 377\nclick left\nsleep 300ms\nmove 700 560\nsleep 1s\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	res := runDemo(t, bin, 1, 400, script, 13*time.Second)
@@ -210,23 +210,23 @@ func TestDemoIndicators(t *testing.T) {
 	if err = json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.Page != "settings" || state.Density != "compact" || state.Volume != 70 {
+	if state.Page != "home" || state.Density != "compact" || state.Volume != 70 {
 		t.Fatalf("state %+v", state)
 	}
 	img := lastMappedFrame(t, res.Artifacts["frames"])
-	accent := color.NRGBA{53, 132, 228, 255} // UA accent-color #3584e4
-	// Muted paint is the demo text color at 45% alpha over white. Each probe
+	accent := color.NRGBA{82, 82, 91, 255} // light theme accent
+	// Muted paint is the demo text color at 45% alpha over the inspector. Each probe
 	// expects a specific color, so missing paint (plain white) fails too.
-	muted := color.NRGBA{151, 157, 167, 255}
+	muted := color.NRGBA{151, 151, 152, 255}
 	for _, p := range []struct {
 		name string
 		x, y int
 		want color.NRGBA
 	}{
-		{"selected radio", 68, 311, accent},
-		{"unselected radio outline", 68, 276, muted},
-		{"slider fill", 150, 371, accent},
-		{"slider rail", 330, 371, muted},
+		{"selected radio", 743, 304, accent},
+		{"unselected radio outline", 741, 273, muted},
+		{"slider fill", 790, 377, accent},
+		{"slider rail", 930, 377, muted},
 	} {
 		t.Logf("%s (%d,%d)=%v", p.name, p.x, p.y, color.NRGBAModel.Convert(img.At(p.x, p.y)))
 		if err := harness.PixelProbe(img, p.x, p.y, p.want, 12); err != nil {
@@ -249,7 +249,7 @@ func lastMappedFrame(t *testing.T, dir string) image.Image {
 		if err != nil {
 			continue // possibly still being written
 		}
-		if harness.PixelProbe(img, 5, 5, color.NRGBA{245, 247, 250, 255}, 8) == nil {
+		if harness.PixelProbe(img, 5, 5, color.NRGBA{255, 255, 255, 255}, 8) == nil || harness.PixelProbe(img, 5, 5, color.NRGBA{32, 32, 35, 255}, 8) == nil {
 			return img
 		}
 	}
