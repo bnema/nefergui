@@ -77,5 +77,6 @@ func (f *Frame) uploadInstances(instances []Instance) error {
 	}
 	copy(unsafe.Slice((*Instance)(*ptr), len(instances)), instances)
 	f.device.Dispatch.UnmapMemory(f.device.Logical, f.instances.Memory)
+	*ptr = nil
 	return nil
 }
