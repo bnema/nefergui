@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"cmp"
 	"os"
 	"slices"
 	"testing"
@@ -39,7 +40,7 @@ func gpuRenderer(t testing.TB) (*Renderer, *session.Target) {
 	for m := range mods {
 		formats = append(formats, Format{FourCC: vkdevice.XRGB8888, Modifier: m})
 	}
-	slices.SortFunc(formats, func(a, b Format) int { return int(a.Modifier>>1) - int(b.Modifier>>1) })
+	slices.SortFunc(formats, func(a, b Format) int { return cmp.Compare(a.Modifier, b.Modifier) })
 	vf := make([]vkdevice.Format, len(formats))
 	for i, f := range formats {
 		vf[i] = vkdevice.Format{FourCC: f.FourCC, Modifier: f.Modifier}
@@ -205,24 +206,19 @@ func TestAllocRendererSteadyFrame(t *testing.T) {
 	step := func() {
 		n++
 		r.Invalidate()
-		// A false result can only mean the GPU still works on the previous
-		// frame of every free buffer; the application retries shortly.
-		ok := false
-		for tries := 0; !ok && tries < 1000; tries++ {
-			var err error
-			if ok, err = r.Render(&out, &n, view); err != nil {
-				t.Fatal(err)
-			}
-			if !ok {
-				time.Sleep(time.Millisecond)
-			}
+		ok, err := r.Render(&out, &n, view)
+		for tries := 0; err == nil && !ok && r.Pending() && tries < 5000; tries++ {
+			time.Sleep(200 * time.Microsecond)
+			ok, err = r.Render(&out, &n, view)
 		}
-		if !ok {
-			t.Fatal("render never found a ready buffer")
+		if err != nil || !ok {
+			t.Fatalf("render: ok=%v err=%v pending=%v", ok, err, r.Pending())
 		}
 		slot := tg.Slots[out.Buffer]
-		_ = tg.Node.Signal(slot.ReleaseHandle, out.ReleasePoint)
-		if err := r.Released(out.Buffer); err != nil {
+		if err = tg.Node.Signal(slot.ReleaseHandle, out.ReleasePoint); err != nil {
+			t.Fatal(err)
+		}
+		if err = r.Released(out.Buffer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -233,5 +229,45 @@ func TestAllocRendererSteadyFrame(t *testing.T) {
 	t.Logf("allocs per steady Render+Released cycle: %v", got)
 	if got > allocBaselineRenderer {
 		t.Fatalf("allocs per steady frame = %v, baseline %v", got, allocBaselineRenderer)
+	}
+}
+
+// A readable eventfd whose point is not signaled (a stale notification) must be
+// drained without spinning, and the live registration must still work.
+func TestRendererGPUStaleReleaseNotification(t *testing.T) {
+	r, tg := gpuRenderer(t)
+	var out Output
+	var m struct{}
+	view := func(f *Frame, _ *struct{}) { f.Root().Box(Inline("width:10px;height:10px;background:#fff")) }
+	r.Resize(64, 64, 1)
+	if ok, err := r.Render(&out, &m, view); !ok || err != nil {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	one := [8]byte{1}
+	if _, err := unix.Write(out.ReleaseFD, one[:]); err != nil {
+		t.Fatal(err)
+	}
+	if !readable(t, out.ReleaseFD, time.Second) {
+		t.Fatal("test setup: eventfd not readable")
+	}
+	if err := r.Released(out.Buffer); err != nil {
+		t.Fatal(err)
+	}
+	if readable(t, out.ReleaseFD, 0) {
+		t.Fatal("stale notification left the eventfd readable: the caller would spin")
+	}
+	if tg.Slots[out.Buffer].Buffer.State == "available" {
+		t.Fatal("buffer reused before the compositor released it")
+	}
+	signalRelease(t, tg, &out)
+	if !readable(t, out.ReleaseFD, time.Second) {
+		t.Fatal("live registration lost after a stale notification")
+	}
+	if err := r.Released(out.Buffer); err != nil {
+		t.Fatal(err)
+	}
+	// Released for an unknown or idle buffer is a no-op that still drains.
+	if err := r.Released(999); err != nil {
+		t.Fatal(err)
 	}
 }

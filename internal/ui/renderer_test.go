@@ -78,19 +78,9 @@ func TestRendererRenderBeforeResizeAndWhenUnchanged(t *testing.T) {
 	if out.Buffer != 1 || out.Width != 100 || len(out.Damage) != 1 || out.Damage[0] != (Rect{Width: 100, Height: 50}) {
 		t.Fatalf("output: %+v", out)
 	}
-	// The follow-up frame a Build requests after settling still draws once; after that nothing changes.
-	for i := 0; i < 3; i++ {
-		ok, err := r.Render(&out, &m, testView)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ok {
-			drawOK(tg, nil).Maybe()
-		}
-	}
-	// tg asserts no Draw beyond the allowed ones when unchanged.
-	if ok, _ := r.Render(&out, &m, testView); ok {
-		t.Fatal("unchanged view drew")
+	// Nothing changed: no rebuild result, so no Draw (the mock has no further expectation).
+	if ok, err := r.Render(&out, &m, testView); ok || err != nil {
+		t.Fatalf("unchanged view: ok=%v err=%v", ok, err)
 	}
 }
 
@@ -101,8 +91,12 @@ func TestRendererKeepsFrameWhenNoBufferFree(t *testing.T) {
 	tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
 	r.Resize(100, 50, 1)
 	tg.EXPECT().Draw(mock.Anything, mock.Anything, mock.Anything).Return(false, nil).Once()
+	tg.EXPECT().Waiting().Return(true).Once()
 	if ok, err := r.Render(&out, &m, testView); ok || err != nil {
 		t.Fatalf("no buffer: ok=%v err=%v", ok, err)
+	}
+	if !r.Pending() {
+		t.Fatal("a built frame blocked on the GPU must report Pending")
 	}
 	drawOK(tg, nil).Once()
 	if ok, err := r.Render(&out, &m, testView); !ok || err != nil {
@@ -248,6 +242,14 @@ func TestRendererForwardsReleasedAndClose(t *testing.T) {
 	tg.EXPECT().Close().Return(nil).Once()
 	if err := r.Close(); err != nil {
 		t.Fatal(err)
+	}
+	// After Close nothing reaches the target (the mock has no expectation).
+	r.Resize(10, 10, 1)
+	if r.Input(&Input{Kind: InputPointerMotion}) {
+		t.Fatal("Input after Close requested a redraw")
+	}
+	if err := r.Released(3); err == nil {
+		t.Fatal("Released after Close succeeded")
 	}
 	if err := r.Close(); err != nil { // second Close is a no-op
 		t.Fatal(err)
