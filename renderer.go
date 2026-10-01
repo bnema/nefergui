@@ -10,6 +10,9 @@ import "github.com/bnema/nefergui/internal/ui"
 // Input and Resize, call Render when a redraw is needed, import and present
 // the Output buffer, and call Released when its ReleaseFD becomes readable.
 //
+// Pending() reports a built frame waiting for the GPU rather than the
+// compositor; arm a short timer (about 2 ms) and call Render again.
+//
 // Render is generic over the model type, so it is a generic method:
 //
 //	ok, err := r.Render(&out, &model, view)

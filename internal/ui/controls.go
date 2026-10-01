@@ -233,15 +233,16 @@ func (n Node) Heading(text string, options ...HeadingOption) {
 	}
 }
 
-// TextInt shows prefix followed by v in decimal without fmt boxing. It builds
-// the text in a stack buffer, so the only allocation is the final string.
+// TextInt shows prefix followed by v in decimal without fmt boxing. A prefix
+// up to 76 bytes is built in a stack buffer, so the only allocation is the
+// final string; a longer prefix costs one more.
 func (n Node) TextInt(prefix string, v int64, options ...ContainerOption) {
 	child := n.child("text", "", options)
 	if !child.valid() {
 		return
 	}
-	var stack [64]byte
-	buf := append(stack[:0], prefix...)
+	var stack [96]byte
+	buf := append(stack[:0], prefix...) // grows on the heap for a long prefix
 	buf = strconv.AppendInt(buf, v, 10)
 	child.element.text = string(buf)
 }

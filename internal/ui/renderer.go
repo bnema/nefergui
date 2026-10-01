@@ -97,6 +97,7 @@ type target interface {
 	Resize(width, height int32)
 	Draw(display []layout.Command, scale float64, out *session.Output) (bool, error)
 	Released(buffer uint64) error
+	Waiting() bool
 	Close() error
 }
 
@@ -179,8 +180,18 @@ func newRenderer(cfg RendererConfig, t target, fonts text.FontSource) (*Renderer
 // (for example a finished paste); call Render after receiving. Safe from any goroutine.
 func (r *Renderer) Wake() <-chan struct{} { return r.rt.wake }
 
+// Pending reports that a built frame is waiting for the GPU (a buffer still
+// being drawn, or a release wait not yet installed) rather than for the
+// compositor. No event announces this: arm a short timer (for example 2 ms)
+// and call Render again. It is false while every buffer belongs to the
+// compositor; Released is the wake-up for that case.
+func (r *Renderer) Pending() bool { return r.unsent && r.target.Waiting() }
+
 // Resize sets the logical surface size and scale. Invalid values are ignored.
 func (r *Renderer) Resize(width, height int, scale float64) {
+	if r.closed {
+		return
+	}
 	w, h := float64(width), float64(height)
 	if width <= 0 || height <= 0 || !(scale > 0) || math.IsInf(scale, 0) {
 		return
@@ -203,7 +214,7 @@ func (r *Renderer) Invalidate() { r.rt.Redraw() }
 
 // Input routes one event and reports whether a redraw is needed.
 func (r *Renderer) Input(ev *Input) bool {
-	if ev == nil {
+	if ev == nil || r.closed {
 		return false
 	}
 	switch ev.Kind {
@@ -249,7 +260,7 @@ func (r *Renderer) Input(ev *Input) bool {
 // Resize. When it returns true, out describes the frame to present.
 func (r *Renderer) Render[T any](out *Output, model *T, view func(*Frame, *T)) (bool, error) {
 	if r.closed {
-		return false, errors.New("nefergui: renderer closed")
+		return false, errClosed
 	}
 	if out == nil || model == nil || view == nil {
 		return false, errors.New("nefergui: nil output, model or view")
@@ -322,7 +333,14 @@ func cursorOf(k css.Keyword) Cursor {
 
 // Released must be called when the release eventfd of an Output buffer is
 // readable. It lets the buffer be reused.
-func (r *Renderer) Released(buffer uint64) error { return r.target.Released(buffer) }
+func (r *Renderer) Released(buffer uint64) error {
+	if r.closed {
+		return errClosed
+	}
+	return r.target.Released(buffer)
+}
+
+var errClosed = errors.New("nefergui: renderer closed")
 
 // Close cancels pending pastes and frees the GPU resources. The Renderer is
 // unusable afterwards.
