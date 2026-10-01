@@ -182,9 +182,9 @@ func TestRendererGPUResizeRetiresBuffers(t *testing.T) {
 }
 
 // allocBaselineRenderer is the measured allocation count of one steady
-// Render+Released cycle on 2026-10-01 (radv, renderD128 and renderD129); the
-// target is 0, the remainder is frame build, layout and prepare.
-const allocBaselineRenderer = 244
+// Render+Released cycle (radv); it is lowered with each optimization until it
+// reaches the target of 0.
+const allocBaselineRenderer = 48
 
 // TestAllocRendererSteadyFrame measures Render with a view whose number
 // changes on every frame and an unchanged structure. It runs on the real GPU
@@ -193,6 +193,27 @@ func TestAllocRendererSteadyFrame(t *testing.T) {
 	if raceEnabled {
 		t.Skip("race instrumentation changes allocation counts")
 	}
+	step := steadyFrame(t)
+	got := testing.AllocsPerRun(50, step)
+	t.Logf("allocs per steady Render+Released cycle: %v", got)
+	if got > allocBaselineRenderer {
+		t.Fatalf("allocs per steady frame = %v, baseline %v", got, allocBaselineRenderer)
+	}
+}
+
+// BenchmarkRendererSteadyFrame profiles the TestAllocRendererSteadyFrame
+// cycle; it needs NEFERGUI_RENDER_NODE.
+func BenchmarkRendererSteadyFrame(b *testing.B) {
+	step := steadyFrame(b)
+	b.ReportAllocs()
+	for b.Loop() {
+		step()
+	}
+}
+
+// steadyFrame returns one warmed Render+Released cycle for a counter view.
+func steadyFrame(t testing.TB) func() {
+	t.Helper()
 	r, tg := gpuRenderer(t)
 	var out Output
 	n := 0
@@ -225,11 +246,7 @@ func TestAllocRendererSteadyFrame(t *testing.T) {
 	for i := 0; i < 20; i++ { // warm up caches, atlas, buffers
 		step()
 	}
-	got := testing.AllocsPerRun(50, step)
-	t.Logf("allocs per steady Render+Released cycle: %v", got)
-	if got > allocBaselineRenderer {
-		t.Fatalf("allocs per steady frame = %v, baseline %v", got, allocBaselineRenderer)
-	}
+	return step
 }
 
 // A readable eventfd whose point is not signaled (a stale notification) must be

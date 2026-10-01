@@ -30,6 +30,33 @@ type Frame struct {
 	imageSerial      uint64
 	atlasRecorded    bool
 	fallbackRecorded bool
+	// signalExported is set once the acquire SYNC_FD was exported. Exporting
+	// with copy transference resets the binary semaphore, so Signal may be
+	// signaled again after the frame's fence completes.
+	signalExported bool
+	scratch        frameScratch
+}
+
+// frameScratch holds the Vulkan info structs and out-parameters of one
+// recording and submission. The purego bindings force every pointer argument
+// to the heap, so building these per call allocated each frame. A Frame is
+// used by a single owner and its structs are only read by the driver during
+// the call that receives them (the command buffer copies recorded state), so
+// they are rebuilt and reused on every call.
+type frameScratch struct {
+	begin      vulkan.CommandBufferBeginInfo
+	barrier    vulkan.ImageMemoryBarrier2
+	dependency vulkan.DependencyInfo
+	attachment vulkan.RenderingAttachmentInfo
+	rendering  vulkan.RenderingInfo
+	sets       [2]vulkan.DescriptorSet
+	screen     [2]float32
+	offset     vulkan.DeviceSize
+	cmd        vulkan.CommandBufferSubmitInfo
+	signal     vulkan.SemaphoreSubmitInfo
+	waiting    vulkan.SemaphoreSubmitInfo
+	submit     vulkan.SubmitInfo2
+	mapped     unsafe.Pointer
 }
 
 func (d *Device) NewFrame(img *Image) (f *Frame, err error) {
@@ -98,10 +125,15 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 		if err = vulkan.Check(f.device.Dispatch.ResetCommandBuffer(f.Commands, 0)); err != nil {
 			return err
 		}
-		f.Signal.Close()
-		f.Signal, err = f.device.NewBinaryFence(true)
-		if err != nil {
-			return err
+		// The fence is signaled, so the previous submission finished. Its
+		// semaphore is reusable only if the SYNC_FD export consumed the signal;
+		// otherwise it is still signaled and must be replaced.
+		if !f.signalExported {
+			f.Signal.Close()
+			f.Signal, err = f.device.NewBinaryFence(true)
+			if err != nil {
+				return err
+			}
 		}
 		f.submitted = false
 	}
@@ -127,9 +159,10 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 			return err
 		}
 	}
-	begin := vulkan.CommandBufferBeginInfo{SType: vulkan.StructureTypeCommandBufferBeginInfo, Flags: vulkan.CommandBufferUsageOneTimeSubmitBit}
+	sc := &f.scratch
+	sc.begin = vulkan.CommandBufferBeginInfo{SType: vulkan.StructureTypeCommandBufferBeginInfo, Flags: vulkan.CommandBufferUsageOneTimeSubmitBit}
 	d := f.device.Dispatch
-	if err = vulkan.Check(d.BeginCommandBuffer(f.Commands, &begin)); err != nil {
+	if err = vulkan.Check(d.BeginCommandBuffer(f.Commands, &sc.begin)); err != nil {
 		return err
 	}
 	f.atlasRecorded = !f.device.atlas.initialized
@@ -147,25 +180,26 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 	if initial {
 		old = vulkan.ImageLayoutUndefined
 	}
-	barrier := vulkan.ImageMemoryBarrier2{SType: vulkan.StructureTypeImageMemoryBarrier2, SrcStageMask: vulkan.PipelineStage2None, DstStageMask: vulkan.PipelineStage2ColorAttachmentOutputBit, DstAccessMask: vulkan.Access2ColorAttachmentWriteBit, OldLayout: old, NewLayout: vulkan.ImageLayoutColorAttachmentOptimal, SrcQueueFamilyIndex: ^uint32(0), DstQueueFamilyIndex: ^uint32(0), Image: img.Image, SubresourceRange: rangeInfo}
-	dependency := vulkan.DependencyInfo{SType: vulkan.StructureTypeDependencyInfo, ImageMemoryBarrierCount: 1, ImageMemoryBarriers: &barrier}
-	d.CmdPipelineBarrier2(f.Commands, &dependency)
+	barrier, dependency := &sc.barrier, &sc.dependency
+	*barrier = vulkan.ImageMemoryBarrier2{SType: vulkan.StructureTypeImageMemoryBarrier2, SrcStageMask: vulkan.PipelineStage2None, DstStageMask: vulkan.PipelineStage2ColorAttachmentOutputBit, DstAccessMask: vulkan.Access2ColorAttachmentWriteBit, OldLayout: old, NewLayout: vulkan.ImageLayoutColorAttachmentOptimal, SrcQueueFamilyIndex: ^uint32(0), DstQueueFamilyIndex: ^uint32(0), Image: img.Image, SubresourceRange: rangeInfo}
+	*dependency = vulkan.DependencyInfo{SType: vulkan.StructureTypeDependencyInfo, ImageMemoryBarrierCount: 1, ImageMemoryBarriers: barrier}
+	d.CmdPipelineBarrier2(f.Commands, dependency)
 	clear := vulkan.ClearValue{}
-	attachment := vulkan.RenderingAttachmentInfo{SType: vulkan.StructureTypeRenderingAttachmentInfo, ImageView: f.View, ImageLayout: vulkan.ImageLayoutColorAttachmentOptimal, LoadOp: vulkan.AttachmentLoadOpClear, StoreOp: vulkan.AttachmentStoreOpStore, ClearValue: clear}
+	sc.attachment = vulkan.RenderingAttachmentInfo{SType: vulkan.StructureTypeRenderingAttachmentInfo, ImageView: f.View, ImageLayout: vulkan.ImageLayoutColorAttachmentOptimal, LoadOp: vulkan.AttachmentLoadOpClear, StoreOp: vulkan.AttachmentStoreOpStore, ClearValue: clear}
 	area := vulkan.Rect2D{Extent: vulkan.Extent2D{Width: uint32(width), Height: uint32(height)}}
-	rendering := vulkan.RenderingInfo{SType: vulkan.StructureTypeRenderingInfo, RenderArea: area, LayerCount: 1, ColorAttachmentCount: 1, ColorAttachments: &attachment}
-	d.CmdBeginRendering(f.Commands, &rendering)
+	sc.rendering = vulkan.RenderingInfo{SType: vulkan.StructureTypeRenderingInfo, RenderArea: area, LayerCount: 1, ColorAttachmentCount: 1, ColorAttachments: &sc.attachment}
+	d.CmdBeginRendering(f.Commands, &sc.rendering)
 	d.CmdBindPipeline(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Handle)
 	// The fragment shader statically references both descriptor sets even
 	// for non-image draws. Bind a valid initialized image set before any
 	// draw; each image batch then replaces set 1 in painter's order.
-	sets := [2]vulkan.DescriptorSet{f.device.atlas.Set, f.device.images.fallback.Texture.Set}
-	d.CmdBindDescriptorSets(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Layout, 0, 2, &sets[0], 0, nil)
-	screen := [2]float32{float32(width), float32(height)}
-	d.CmdPushConstants(f.Commands, pipe.Layout, vulkan.ShaderStageVertexBit|vulkan.ShaderStageFragmentBit, 0, 8, unsafe.Pointer(&screen))
+	sc.sets = [2]vulkan.DescriptorSet{f.device.atlas.Set, f.device.images.fallback.Texture.Set}
+	d.CmdBindDescriptorSets(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Layout, 0, 2, &sc.sets[0], 0, nil)
+	sc.screen = [2]float32{float32(width), float32(height)}
+	d.CmdPushConstants(f.Commands, pipe.Layout, vulkan.ShaderStageVertexBit|vulkan.ShaderStageFragmentBit, 0, 8, unsafe.Pointer(&sc.screen))
 	if len(instances) > 0 {
-		offset := vulkan.DeviceSize(0)
-		d.CmdBindVertexBuffers(f.Commands, 0, 1, &f.instances.Buffer, &offset)
+		sc.offset = 0
+		d.CmdBindVertexBuffers(f.Commands, 0, 1, &f.instances.Buffer, &sc.offset)
 		for _, batch := range batches {
 			if batch.Count == 0 || uint64(batch.First)+uint64(batch.Count) > uint64(len(instances)) {
 				return fmt.Errorf("invalid list batch range")
@@ -187,7 +221,7 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 		barrier.DstAccessMask = vulkan.Access2TransferReadBit
 		barrier.OldLayout = vulkan.ImageLayoutColorAttachmentOptimal
 		barrier.NewLayout = vulkan.ImageLayoutTransferSrcOptimal
-		d.CmdPipelineBarrier2(f.Commands, &dependency)
+		d.CmdPipelineBarrier2(f.Commands, dependency)
 		f.Readback.record(f.Commands, img.Image)
 		barrier.SrcStageMask = vulkan.PipelineStage2TransferBit
 		barrier.SrcAccessMask = vulkan.Access2TransferReadBit
@@ -200,22 +234,23 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 	barrier.DstStageMask = vulkan.PipelineStage2AllCommandsBit
 	barrier.DstAccessMask = vulkan.Access2MemoryReadBit
 	barrier.NewLayout = vulkan.ImageLayoutGeneral
-	d.CmdPipelineBarrier2(f.Commands, &dependency)
+	d.CmdPipelineBarrier2(f.Commands, dependency)
 	return vulkan.Check(d.EndCommandBuffer(f.Commands))
 }
 
 // Submit has no CPU wait: the next render waits on a temporarily imported
 // release SYNC_FD, and the compositor waits on the exported acquire SYNC_FD.
 func (f *Frame) Submit(wait *BinaryFence) error {
-	cmd := vulkan.CommandBufferSubmitInfo{SType: vulkan.StructureTypeCommandBufferSubmitInfo, CommandBuffer: f.Commands}
-	signal := vulkan.SemaphoreSubmitInfo{SType: vulkan.StructureTypeSemaphoreSubmitInfo, Semaphore: f.Signal.Semaphore, StageMask: vulkan.PipelineStage2AllCommandsBit}
-	info := vulkan.SubmitInfo2{SType: vulkan.StructureTypeSubmitInfo2, CommandBufferInfoCount: 1, CommandBufferInfos: &cmd, SignalSemaphoreInfoCount: 1, SignalSemaphoreInfos: &signal}
+	sc := &f.scratch
+	sc.cmd = vulkan.CommandBufferSubmitInfo{SType: vulkan.StructureTypeCommandBufferSubmitInfo, CommandBuffer: f.Commands}
+	sc.signal = vulkan.SemaphoreSubmitInfo{SType: vulkan.StructureTypeSemaphoreSubmitInfo, Semaphore: f.Signal.Semaphore, StageMask: vulkan.PipelineStage2AllCommandsBit}
+	sc.submit = vulkan.SubmitInfo2{SType: vulkan.StructureTypeSubmitInfo2, CommandBufferInfoCount: 1, CommandBufferInfos: &sc.cmd, SignalSemaphoreInfoCount: 1, SignalSemaphoreInfos: &sc.signal}
 	if wait != nil {
-		waiting := vulkan.SemaphoreSubmitInfo{SType: vulkan.StructureTypeSemaphoreSubmitInfo, Semaphore: wait.Semaphore, StageMask: vulkan.PipelineStage2AllCommandsBit}
-		info.WaitSemaphoreInfoCount = 1
-		info.WaitSemaphoreInfos = &waiting
+		sc.waiting = vulkan.SemaphoreSubmitInfo{SType: vulkan.StructureTypeSemaphoreSubmitInfo, Semaphore: wait.Semaphore, StageMask: vulkan.PipelineStage2AllCommandsBit}
+		sc.submit.WaitSemaphoreInfoCount = 1
+		sc.submit.WaitSemaphoreInfos = &sc.waiting
 	}
-	if err := vulkan.Check(f.device.Dispatch.QueueSubmit2(f.device.Queue, 1, &info, f.Done)); err != nil {
+	if err := vulkan.Check(f.device.Dispatch.QueueSubmit2(f.device.Queue, 1, &sc.submit, f.Done)); err != nil {
 		// Only this recording's unsubmitted image state is released; a
 		// previous submission's serial was completed by record.
 		if f.device.images != nil && f.imageSerial != 0 {
@@ -224,6 +259,7 @@ func (f *Frame) Submit(wait *BinaryFence) error {
 		return err
 	}
 	f.submitted = true
+	f.signalExported = false
 	if f.device.images != nil && f.imageSerial != 0 {
 		f.device.images.inflight[f] = struct{}{}
 	}
@@ -234,6 +270,16 @@ func (f *Frame) Submit(wait *BinaryFence) error {
 		f.device.images.fallbackReady = true
 	}
 	return nil
+}
+
+// ExportSignal exports the submitted frame's acquire SYNC_FD. The export
+// resets the semaphore, which lets the next recording of this frame reuse it.
+func (f *Frame) ExportSignal() (int, error) {
+	fd, err := f.Signal.Export()
+	if err == nil {
+		f.signalExported = true
+	}
+	return fd, err
 }
 
 // settleImages runs once the frame is Ready. A submitted frame's serial is

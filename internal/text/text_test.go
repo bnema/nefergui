@@ -434,3 +434,38 @@ func TestLetterSpacingClusterGeometry(t *testing.T) {
 		})
 	}
 }
+
+// BenchmarkMeasureMissShort measures an uncached short label, the common
+// per-frame miss when a counter or clock changes.
+func BenchmarkMeasureMissShort(b *testing.B) {
+	e := NewEngine(fixture(b))
+	r := Request{Families: []string{"Noto Sans"}, Size: 16}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := e.measure("Value: 42", r, 0); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// allocBaselineMeasureMiss is the measured allocation count of an uncached
+// short label; most of the remainder is inside go-text segmentation and
+// wrapping. Lower it with each optimization.
+const allocBaselineMeasureMiss = 33
+
+func TestAllocMeasureMissShort(t *testing.T) {
+	if raceEnabled {
+		t.Skip("race instrumentation changes allocation counts")
+	}
+	e := NewEngine(fixture(t))
+	r := Request{Families: []string{"Noto Sans"}, Size: 16}
+	measure := func() {
+		if _, err := e.measure("Value: 42", r, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	measure() // load fonts and fill scratch buffers
+	if got := testing.AllocsPerRun(50, measure); got > allocBaselineMeasureMiss {
+		t.Fatalf("allocs per uncached measure = %v, baseline %v", got, allocBaselineMeasureMiss)
+	}
+}

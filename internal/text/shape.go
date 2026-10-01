@@ -3,6 +3,7 @@ package text
 import (
 	"errors"
 	"math"
+	"slices"
 
 	"github.com/bnema/nefergui/internal/bidi"
 	"github.com/go-text/typesetting/di"
@@ -53,7 +54,33 @@ type Engine struct {
 	seg     shaping.Segmenter
 	shaper  shaping.HarfbuzzShaper
 	wrapper shaping.LineWrapper
+	never   shaping.LineWrapper
 	cache   measureCache
+	scratch measureScratch
+}
+
+// measureScratch holds per-call buffers reused across measure calls. Nothing
+// in it may be referenced by a returned Layout.
+type measureScratch struct {
+	runes    []rune
+	faces    []*Face
+	reverse  map[*font.Face]*Face
+	faceFor  []*font.Face
+	items    []shaping.Input
+	levelled []shaping.Input
+	outs     []shaping.Output
+	runs     shaping.RunIterator
+	visual   visualScratch
+}
+
+// iterate returns the reusable run iterator positioned at the start of outs.
+func (s *measureScratch) iterate(outs []shaping.Output) shaping.RunIterator {
+	if r, ok := s.runs.(interface{ Reset([]shaping.Output) }); ok {
+		r.Reset(outs)
+		return s.runs
+	}
+	s.runs = shaping.NewSliceIterator(outs)
+	return s.runs
 }
 
 func NewEngine(c *Catalog) *Engine { return &Engine{catalog: c} }
@@ -65,8 +92,8 @@ func (m constantFace) ResolveFace(r rune) *font.Face { return m.face }
 // clusterFaces selects a single face for every UAX#29 extended grapheme. Format
 // characters (ZWJ and variation selectors) do not need outline coverage; they
 // remain in the cluster to let HarfBuzz apply substitutions.
-func clusterFaces(text []rune, choices []*Face) []*font.Face {
-	selected := make([]*font.Face, len(text))
+func clusterFaces(selected []*font.Face, text []rune, choices []*Face) []*font.Face {
+	selected = slices.Grow(selected[:0], len(text))[:len(text)]
 	var seg segmenter.Segmenter
 	seg.Init(text)
 	it := seg.GraphemeIterator()
@@ -110,8 +137,8 @@ func faceCovers(f *Face, cluster []rune) bool {
 }
 
 // split cluster-aligned face runs after go-text's bidi/script itemization.
-func splitFaces(items []shaping.Input, faceFor []*font.Face) []shaping.Input {
-	var out []shaping.Input
+func splitFaces(out, items []shaping.Input, faceFor []*font.Face) []shaping.Input {
+	out = out[:0]
 	for _, item := range items {
 		if item.RunStart >= item.RunEnd {
 			continue
@@ -223,27 +250,34 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 	if len(choices) == 0 {
 		return nil, nil, errors.New("no usable fonts")
 	}
-	reverse := map[*font.Face]*Face{}
-	faces := make([]*Face, 0, len(choices))
+	sc := &e.scratch
+	if sc.reverse == nil {
+		sc.reverse = map[*font.Face]*Face{}
+	}
+	clear(sc.reverse)
+	faces := sc.faces[:0]
 	// Variations belong to the engine invocation; do not mutate the catalog's shared faces.
 	for _, f := range choices {
 		if len(r.Variations) > 0 {
 			f = f.WithVariations(r.Variations)
 		}
 		faces = append(faces, f)
-		reverse[f.Shape] = f
+		sc.reverse[f.Shape] = f
 	}
-	faceFor := clusterFaces(text, faces)
+	sc.faces = faces
+	sc.faceFor = clusterFaces(sc.faceFor, text, faces)
 	input := shaping.Input{Text: text, RunEnd: len(text), Direction: direction, Size: fixed.Int26_6(math.Round(r.Size * 64))}
-	items := splitFaces(e.seg.Split(input, constantFace{face: faces[0].Shape}), faceFor)
-	items = splitLevels(items, levels)
-	out := make([]shaping.Output, 0, len(items))
-	for _, item := range items {
+	sc.items = splitFaces(sc.items, e.seg.Split(input, constantFace{face: faces[0].Shape}), sc.faceFor)
+	sc.levelled = splitLevels(sc.levelled, sc.items, levels)
+	out := sc.outs[:0]
+	for _, item := range sc.levelled {
 		if item.RunEnd > item.RunStart {
 			out = append(out, e.shaper.Shape(item))
 		}
 	}
-	return out, reverse, nil
+	clear(out[len(out):cap(out)]) // drop glyph references from longer earlier calls
+	sc.outs = out
+	return out, sc.reverse, nil
 }
 
 // Measure shapes, wraps (UAX#14) and positions runs. Width <= 0 means unbounded.
@@ -268,6 +302,13 @@ func (e *Engine) Measure(s string, r Request, width float64) (Layout, error) {
 // once after each frame that may have measured text.
 func (e *Engine) EndFrame() { e.cache.endFrame() }
 
+func appendRunes(dst []rune, s string) []rune {
+	for _, c := range s {
+		dst = append(dst, c)
+	}
+	return dst
+}
+
 func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 	var result Layout
 	if math.IsNaN(width) || math.IsInf(width, 0) || width > 1<<24 {
@@ -276,9 +317,11 @@ func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 	if math.IsNaN(r.LetterSpacing) || math.IsInf(r.LetterSpacing, 0) || math.Abs(r.LetterSpacing) > 4096 {
 		return result, errors.New("invalid letter spacing")
 	}
-	text := []rune(s)
+	e.scratch.runes = appendRunes(e.scratch.runes[:0], s)
+	text := e.scratch.runes
 	if paragraphs, split := paragraphRanges(text); split {
-		return e.measureParagraphs(text, paragraphs, r, width)
+		// Each paragraph measure reuses the scratch runes; keep a copy.
+		return e.measureParagraphs(slices.Clone(text), paragraphs, r, width)
 	}
 	if r.Direction > bidi.RTL {
 		return result, errors.New("invalid paragraph direction")
@@ -317,8 +360,7 @@ func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 	var minWidth float64
 	// Compute exact word widths even when a shaped run crosses a break opportunity.
 	// Wrapper's Never policy at zero width supplies min-content using its native glyph-cluster mapping.
-	var never shaping.LineWrapper
-	words, _ := never.WrapParagraphF(shaping.WrapConfig{Direction: direction, BreakPolicy: shaping.Never, DisableTrailingWhitespaceTrim: true}, 1, text, shaping.NewSliceIterator(outs))
+	words, _ := e.never.WrapParagraphF(shaping.WrapConfig{Direction: direction, BreakPolicy: shaping.Never, DisableTrailingWhitespaceTrim: true}, 1, text, e.scratch.iterate(outs))
 	for _, line := range words {
 		w := 0.0
 		for _, o := range line {
@@ -329,7 +371,7 @@ func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 		}
 	}
 	result.MinContent = minWidth
-	maxLines, _ := e.wrapper.WrapParagraphF(shaping.WrapConfig{Direction: direction, DisableTrailingWhitespaceTrim: true}, fixed.Int26_6(1<<30), text, shaping.NewSliceIterator(outs))
+	maxLines, _ := e.wrapper.WrapParagraphF(shaping.WrapConfig{Direction: direction, DisableTrailingWhitespaceTrim: true}, fixed.Int26_6(1<<30), text, e.scratch.iterate(outs))
 	for _, line := range maxLines {
 		w := 0.0
 		for _, o := range line {
@@ -343,21 +385,37 @@ func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 	if width > 0 {
 		limit = fixed.Int26_6(math.Round(width * 64))
 	}
-	wrapped, _ := e.wrapper.WrapParagraphF(shaping.WrapConfig{Direction: direction, DisableTrailingWhitespaceTrim: true}, limit, text, shaping.NewSliceIterator(outs))
+	wrapped, _ := e.wrapper.WrapParagraphF(shaping.WrapConfig{Direction: direction, DisableTrailingWhitespaceTrim: true}, limit, text, e.scratch.iterate(outs))
+	if len(wrapped) > 0 {
+		result.Lines = make([]Line, 0, len(wrapped))
+	}
 	for idx, line := range wrapped {
-		ordered, levelFor, err := visualRuns(text, line, r.Direction)
+		ordered, err := e.scratch.visual.order(text, line, r.Direction)
 		if err != nil {
 			return result, err
 		}
 		dst := Line{Baseline: baseline + float64(idx)*height, Height: height, Direction: direction}
+		glyphCount := 0
 		for _, o := range ordered {
+			glyphCount += len(o.output.Glyphs)
+		}
+		var glyphs []Glyph
+		if len(ordered) > 0 {
+			dst.Runs = make([]Run, 0, len(ordered))
+			glyphs = make([]Glyph, 0, glyphCount)
+		}
+		for _, item := range ordered {
+			o := item.output
 			f := reverse[o.Face]
-			level := levelFor[o.Runes.Offset]
-			run := Run{Face: f, Direction: o.Direction, Level: level, Start: o.Runes.Offset, End: o.Runes.Offset + o.Runes.Count, X: dst.Width, Y: dst.Baseline, Advance: float64(o.Advance) / 64}
+			run := Run{Face: f, Direction: o.Direction, Level: item.level, Start: o.Runes.Offset, End: o.Runes.Offset + o.Runes.Count, X: dst.Width, Y: dst.Baseline, Advance: float64(o.Advance) / 64}
 			cursor := 0.0
+			first := len(glyphs)
 			for _, g := range o.Glyphs {
-				run.Glyphs = append(run.Glyphs, Glyph{ID: g.GlyphID, X: run.X + cursor + float64(g.XOffset)/64, Y: run.Y - float64(g.YOffset)/64, Advance: float64(g.Advance) / 64, Cluster: g.TextIndex(), Missing: g.GlyphID == 0})
+				glyphs = append(glyphs, Glyph{ID: g.GlyphID, X: run.X + cursor + float64(g.XOffset)/64, Y: run.Y - float64(g.YOffset)/64, Advance: float64(g.Advance) / 64, Cluster: g.TextIndex(), Missing: g.GlyphID == 0})
 				cursor += float64(g.Advance) / 64
+			}
+			if len(glyphs) > first {
+				run.Glyphs = glyphs[first:len(glyphs):len(glyphs)]
 			}
 			dst.Runs = append(dst.Runs, run)
 			dst.Width += run.Advance

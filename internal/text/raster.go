@@ -28,17 +28,19 @@ type Mask struct {
 	Origin image.Point
 }
 
+// VariationHash hashes the axis coordinates without allocating for up to 16
+// axes (fonts rarely have more).
 func VariationHash(v []font.Variation) [32]byte {
-	h := sha256.New()
-	var b [8]byte
-	for _, coord := range v {
-		binary.BigEndian.PutUint32(b[:4], uint32(coord.Tag))
-		binary.BigEndian.PutUint32(b[4:], math.Float32bits(coord.Value))
-		_, _ = h.Write(b[:])
+	var buf [16 * 8]byte
+	b := buf[:0]
+	if len(v) > 16 {
+		b = make([]byte, 0, len(v)*8)
 	}
-	var out [32]byte
-	copy(out[:], h.Sum(nil))
-	return out
+	for _, coord := range v {
+		b = binary.BigEndian.AppendUint32(b, uint32(coord.Tag))
+		b = binary.BigEndian.AppendUint32(b, math.Float32bits(coord.Value))
+	}
+	return sha256.Sum256(b)
 }
 func GlyphKey(face *Face, id font.GID, physicalSize, originX float64, variations []font.Variation) (Key, error) {
 	if face == nil || VariationHash(variations) != VariationHash(face.Variations) || physicalSize <= 0 || physicalSize > 4096 || math.IsNaN(physicalSize) || math.IsInf(physicalSize, 0) || math.IsNaN(originX) || math.IsInf(originX, 0) {

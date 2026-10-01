@@ -71,11 +71,12 @@ func (f *Frame) uploadInstances(instances []Instance) error {
 		}
 		b.capacity = len(instances)
 	}
-	var ptr unsafe.Pointer
-	if err := vulkan.Check(f.device.Dispatch.MapMemory(f.device.Logical, f.instances.Memory, 0, size, 0, &ptr)); err != nil {
+	ptr := &f.scratch.mapped
+	if err := vulkan.Check(f.device.Dispatch.MapMemory(f.device.Logical, f.instances.Memory, 0, size, 0, ptr)); err != nil {
 		return err
 	}
-	copy(unsafe.Slice((*Instance)(ptr), len(instances)), instances)
+	copy(unsafe.Slice((*Instance)(*ptr), len(instances)), instances)
 	f.device.Dispatch.UnmapMemory(f.device.Logical, f.instances.Memory)
+	*ptr = nil
 	return nil
 }

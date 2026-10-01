@@ -20,6 +20,7 @@ type Slot struct {
 	Wait          *vkdevice.BinaryFence
 	PendingWait   *vkdevice.BinaryFence
 	WaitInFlight  bool
+	spare         *vkdevice.BinaryFence // consumed, unsignaled wait semaphore kept for reuse
 	ReleaseHandle uint32
 	ReleaseFD     int  // eventfd armed on each commit's release point
 	ReleaseExport int  // exported syncobj fd of the release timeline
@@ -67,10 +68,25 @@ func installReleaseWait(slot *Slot, next *vkdevice.BinaryFence, ready func() (bo
 		}
 	}
 	if slot.Wait != nil {
-		slot.Wait.Close()
+		if slot.WaitInFlight {
+			slot.recycle(slot.Wait) // submission done: the wait was consumed
+		} else {
+			slot.Wait.Close() // never waited on: its imported payload is still signaled
+		}
 	}
 	slot.Wait, slot.PendingWait, slot.WaitInFlight = next, nil, false
 	return true, nil
+}
+
+// recycle keeps a release-wait semaphore for reuse. The caller guarantees the
+// submission that waited on it has completed: a wait operation consumes the
+// temporarily imported payload and leaves the semaphore unsignaled and idle.
+func (s *Slot) recycle(w *vkdevice.BinaryFence) {
+	if s.spare != nil {
+		w.Close()
+		return
+	}
+	s.spare = w
 }
 
 type retiredPipelines struct {
