@@ -56,9 +56,6 @@ const (
 	CursorPointer    = ui.CursorPointer
 	CursorText       = ui.CursorText
 	CursorNotAllowed = ui.CursorNotAllowed
-
-	ModAlt   = ui.ModAlt
-	ModSuper = ui.ModSuper
 )
 
 // NewRenderer opens the GPU named by cfg.MainDevice and loads fonts and

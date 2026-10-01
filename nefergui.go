@@ -111,4 +111,6 @@ const (
 
 	ModShift = ui.ModShift
 	ModCtrl  = ui.ModCtrl
+	ModAlt   = ui.ModAlt
+	ModSuper = ui.ModSuper
 )

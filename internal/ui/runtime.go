@@ -43,7 +43,6 @@ type runtime struct {
 	pasteID               uint64
 	ime                   edit.IME
 	redraw                bool
-	consumed              bool // the last committed build handled input events
 	inputRects            []Rect
 	inputNil, inputStaged bool
 }
@@ -176,7 +175,6 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	if len(events) > 0 {
 		r.redraw = true
 	}
-	r.consumed = len(events) > 0
 	// Release every losing editor before enabling the winner: the IME port
 	// represents one seat, not one port per editor. Never depend on map order.
 	for id, editor := range r.edits {
