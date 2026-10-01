@@ -12,13 +12,6 @@ import (
 	"github.com/bnema/purego-vulkan/vulkan"
 )
 
-// Rect contains a normalized framebuffer rectangle and straight RGBA color.
-// The fragment stage outputs premultiplied RGBA, including transparent alpha.
-type Rect struct {
-	Bounds [4]float32
-	Color  [4]float32
-}
-
 // Instance is a physical-pixel list quad. Color is straight sRGB; the shader
 // premultiplies it. Clip uses x/y/width/height, radii are TL/TR/BR/BL.
 // KindLayer.x = 6 samples set 1 binding 0 as a 2D image texture.
@@ -59,19 +52,11 @@ type Pipeline struct {
 	Layout vulkan.PipelineLayout
 }
 
-// NewRectPipeline fixes the Vulkan viewport and scissor to the image size.
-// The pinned Vulkan binding does not expose vkCmdSetViewport/Scissor, so resize
-// builds a new pipeline rather than recording unsupported dynamic-state calls.
-func (d *Device) NewRectPipeline(width, height int32) (p *Pipeline, err error) {
-	return d.newPipeline(width, height, false)
-}
-
-// NewListPipeline creates an instanced, premultiplied-alpha quad pipeline.
+// NewListPipeline creates an instanced, premultiplied-alpha quad pipeline. It
+// fixes the Vulkan viewport and scissor to the image size: the pinned Vulkan
+// binding does not expose vkCmdSetViewport/Scissor, so resize builds a new
+// pipeline rather than recording unsupported dynamic-state calls.
 func (d *Device) NewListPipeline(width, height int32) (p *Pipeline, err error) {
-	return d.newPipeline(width, height, true)
-}
-
-func (d *Device) newPipeline(width, height int32, list bool) (p *Pipeline, err error) {
 	if width <= 0 || height <= 0 {
 		return nil, fmt.Errorf("invalid render area %dx%d", width, height)
 	}
@@ -81,44 +66,32 @@ func (d *Device) newPipeline(width, height int32, list bool) (p *Pipeline, err e
 			p.Close()
 		}
 	}()
-	pushSize := uint32(unsafe.Sizeof(Rect{}))
-	if list {
-		pushSize = 8
-		if d.atlas == nil {
-			d.atlas, err = d.newGlyphAtlas()
-			if err != nil {
-				return nil, err
-			}
-		}
-		if d.images == nil {
-			d.images, err = d.newImageCache()
-			if err != nil {
-				return nil, err
-			}
+	if d.atlas == nil {
+		d.atlas, err = d.newGlyphAtlas()
+		if err != nil {
+			return nil, err
 		}
 	}
-	rangeInfo := vulkan.PushConstantRange{StageFlags: vulkan.ShaderStageVertexBit | vulkan.ShaderStageFragmentBit, Size: pushSize}
-	layoutInfo := vulkan.PipelineLayoutCreateInfo{SType: vulkan.StructureTypePipelineLayoutCreateInfo, PushConstantRangeCount: 1, PushConstantRanges: &rangeInfo}
-	if list {
-		// Set 0 samples the atlas; set 1 samples the image descriptor
-		// bound for the current image batch.
-		layouts := [2]vulkan.DescriptorSetLayout{d.atlas.Layout, d.images.Layout}
-		layoutInfo.SetLayoutCount = uint32(len(layouts))
-		layoutInfo.SetLayouts = &layouts[0]
+	if d.images == nil {
+		d.images, err = d.newImageCache()
+		if err != nil {
+			return nil, err
+		}
 	}
+	rangeInfo := vulkan.PushConstantRange{StageFlags: vulkan.ShaderStageVertexBit | vulkan.ShaderStageFragmentBit, Size: 8}
+	// Set 0 samples the atlas; set 1 samples the image descriptor bound for
+	// the current image batch.
+	layouts := [2]vulkan.DescriptorSetLayout{d.atlas.Layout, d.images.Layout}
+	layoutInfo := vulkan.PipelineLayoutCreateInfo{SType: vulkan.StructureTypePipelineLayoutCreateInfo, SetLayoutCount: uint32(len(layouts)), SetLayouts: &layouts[0], PushConstantRangeCount: 1, PushConstantRanges: &rangeInfo}
 	if err = vulkan.Check(d.Dispatch.CreatePipelineLayout(d.Logical, &layoutInfo, nil, &p.Layout)); err != nil {
-		return nil, fmt.Errorf("create rect pipeline layout: %w", err)
+		return nil, fmt.Errorf("create list pipeline layout: %w", err)
 	}
-	vert, frag := shaders.Vertex, shaders.Fragment
-	if list {
-		vert, frag = shaders.ListVertex, shaders.ListFragment
-	}
-	vertex, err := d.shaderModule(vert)
+	vertex, err := d.shaderModule(shaders.ListVertex)
 	if err != nil {
 		return nil, err
 	}
 	defer d.Dispatch.DestroyShaderModule(d.Logical, vertex, nil)
-	fragment, err := d.shaderModule(frag)
+	fragment, err := d.shaderModule(shaders.ListFragment)
 	if err != nil {
 		return nil, err
 	}
@@ -129,19 +102,16 @@ func (d *Device) newPipeline(width, height int32, list bool) (p *Pipeline, err e
 		{SType: vulkan.StructureTypePipelineShaderStageCreateInfo, Stage: vulkan.ShaderStageFragmentBit, Module: fragment, Name: &main[0]},
 	}
 	vertexInput := vulkan.PipelineVertexInputStateCreateInfo{SType: vulkan.StructureTypePipelineVertexInputStateCreateInfo}
-	var binding vulkan.VertexInputBindingDescription
 	var attrs [13]vulkan.VertexInputAttributeDescription
-	if list {
-		binding = vulkan.VertexInputBindingDescription{Stride: uint32(unsafe.Sizeof(Instance{})), InputRate: vulkan.VertexInputRateInstance}
-		offsets := [13]uint32{uint32(unsafe.Offsetof(Instance{}.Bounds)), uint32(unsafe.Offsetof(Instance{}.Color)), uint32(unsafe.Offsetof(Instance{}.Clip)), uint32(unsafe.Offsetof(Instance{}.Radii)), uint32(unsafe.Offsetof(Instance{}.UV)), uint32(unsafe.Offsetof(Instance{}.KindLayer)), uint32(unsafe.Offsetof(Instance{}.Widths)), uint32(unsafe.Offsetof(Instance{}.Sides)), uint32(unsafe.Offsetof(Instance{}.Sides)) + 16, uint32(unsafe.Offsetof(Instance{}.Sides)) + 32, uint32(unsafe.Offsetof(Instance{}.Sides)) + 48, uint32(unsafe.Offsetof(Instance{}.Shape)), uint32(unsafe.Offsetof(Instance{}.Shadow))}
-		for i := range attrs {
-			attrs[i] = vulkan.VertexInputAttributeDescription{Location: uint32(i), Format: vulkan.FormatR32g32b32a32Sfloat, Offset: offsets[i]}
-		}
-		vertexInput.VertexBindingDescriptionCount = 1
-		vertexInput.VertexBindingDescriptions = &binding
-		vertexInput.VertexAttributeDescriptionCount = uint32(len(attrs))
-		vertexInput.VertexAttributeDescriptions = &attrs[0]
+	binding := vulkan.VertexInputBindingDescription{Stride: uint32(unsafe.Sizeof(Instance{})), InputRate: vulkan.VertexInputRateInstance}
+	offsets := [13]uint32{uint32(unsafe.Offsetof(Instance{}.Bounds)), uint32(unsafe.Offsetof(Instance{}.Color)), uint32(unsafe.Offsetof(Instance{}.Clip)), uint32(unsafe.Offsetof(Instance{}.Radii)), uint32(unsafe.Offsetof(Instance{}.UV)), uint32(unsafe.Offsetof(Instance{}.KindLayer)), uint32(unsafe.Offsetof(Instance{}.Widths)), uint32(unsafe.Offsetof(Instance{}.Sides)), uint32(unsafe.Offsetof(Instance{}.Sides)) + 16, uint32(unsafe.Offsetof(Instance{}.Sides)) + 32, uint32(unsafe.Offsetof(Instance{}.Sides)) + 48, uint32(unsafe.Offsetof(Instance{}.Shape)), uint32(unsafe.Offsetof(Instance{}.Shadow))}
+	for i := range attrs {
+		attrs[i] = vulkan.VertexInputAttributeDescription{Location: uint32(i), Format: vulkan.FormatR32g32b32a32Sfloat, Offset: offsets[i]}
 	}
+	vertexInput.VertexBindingDescriptionCount = 1
+	vertexInput.VertexBindingDescriptions = &binding
+	vertexInput.VertexAttributeDescriptionCount = uint32(len(attrs))
+	vertexInput.VertexAttributeDescriptions = &attrs[0]
 	assembly := vulkan.PipelineInputAssemblyStateCreateInfo{SType: vulkan.StructureTypePipelineInputAssemblyStateCreateInfo, Topology: vulkan.PrimitiveTopologyTriangleList}
 	viewport := vulkan.Viewport{Width: float32(width), Height: float32(height), MaxDepth: 1}
 	scissor := vulkan.Rect2D{Extent: vulkan.Extent2D{Width: uint32(width), Height: uint32(height)}}
@@ -154,7 +124,7 @@ func (d *Device) newPipeline(width, height int32, list bool) (p *Pipeline, err e
 	rendering := vulkan.PipelineRenderingCreateInfo{SType: vulkan.StructureTypePipelineRenderingCreateInfo, ColorAttachmentCount: 1, ColorAttachmentFormats: &format}
 	ci := vulkan.GraphicsPipelineCreateInfo{SType: vulkan.StructureTypeGraphicsPipelineCreateInfo, Next: unsafe.Pointer(&rendering), StageCount: 2, Stages: &stages[0], VertexInputState: &vertexInput, InputAssemblyState: &assembly, ViewportState: &vp, RasterizationState: &raster, MultisampleState: &ms, ColorBlendState: &blend, Layout: p.Layout}
 	if err = vulkan.Check(d.Dispatch.CreateGraphicsPipelines(d.Logical, 0, 1, &ci, nil, &p.Handle)); err != nil {
-		return nil, fmt.Errorf("create rectangle pipeline with dynamic rendering: %w", err)
+		return nil, fmt.Errorf("create list pipeline with dynamic rendering: %w", err)
 	}
 	return p, nil
 }

@@ -12,7 +12,7 @@ func TestEmbeddedSPIRV(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		data []byte
-	}{{"vertex", Vertex}, {"fragment", Fragment}, {"list vertex", ListVertex}, {"list fragment", ListFragment}} {
+	}{{"list vertex", ListVertex}, {"list fragment", ListFragment}} {
 		if len(tc.data) < 20 || !bytes.Equal(tc.data[:4], []byte{3, 2, 35, 7}) || len(tc.data)%4 != 0 {
 			t.Fatalf("%s: not SPIR-V", tc.name)
 		}
@@ -27,7 +27,7 @@ func TestShaderFreshness(t *testing.T) {
 	for _, tc := range []struct {
 		file, stage string
 		embedded    []byte
-	}{{"rect.vert", "vertex", Vertex}, {"rect.frag", "fragment", Fragment}, {"list.vert", "vertex", ListVertex}, {"list.frag", "fragment", ListFragment}} {
+	}{{"list.vert", "vertex", ListVertex}, {"list.frag", "fragment", ListFragment}} {
 		out := filepath.Join(t.TempDir(), "shader.spv")
 		cmd := exec.Command(bin, "-O", "-fshader-stage="+tc.stage, "-o", out, tc.file)
 		if log, err := cmd.CombinedOutput(); err != nil {
