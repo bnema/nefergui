@@ -41,6 +41,15 @@ type queryArg struct {
 	Count, Flags    uint32
 }
 
+// eventFDArg is struct drm_syncobj_eventfd: the kernel signals fd once the
+// timeline point is signaled (flags 0) without any thread waiting on it.
+type eventFDArg struct {
+	Handle, Flags uint32
+	Point         uint64
+	FD            int32
+	Pad           uint32
+}
+
 const (
 	ioctlCreate       = uintptr(0xc00864bf)
 	ioctlDestroy      = uintptr(0xc00864c0)
@@ -49,6 +58,8 @@ const (
 	ioctlTimelineWait = uintptr(0xc03064ca)
 	ioctlQuery        = uintptr(0xc01864cb)
 	ioctlTransfer     = uintptr(0xc02064cc)
+	ioctlTimelineSig  = uintptr(0xc01864cd)
+	ioctlEventFD      = uintptr(0xc01864cf)
 	importSyncFile    = 1
 	exportSyncFile    = 1
 )
@@ -116,6 +127,41 @@ func (n *Node) ExportTimeline(handle uint32) (int, error) {
 		return -1, err
 	}
 	return int(a.FD), nil
+}
+
+// ImportTimeline turns a syncobj FD (as returned by ExportTimeline, possibly by
+// another process or Node) into a handle of this node. The FD stays owned by
+// the caller.
+func (n *Node) ImportTimeline(fd int) (uint32, error) {
+	a := handleArg{FD: int32(fd)}
+	if err := n.ioctl(ioctlFDToHandle, unsafe.Pointer(&a)); err != nil {
+		return 0, err
+	}
+	return a.Handle, nil
+}
+
+// EventFD arms efd, an eventfd owned by the caller, to become readable when
+// point of the timeline behind handle is signaled. The point need not be
+// submitted yet. The registration is one-shot: re-arm after every use. The
+// call returns at once and never waits.
+func (n *Node) EventFD(handle uint32, point uint64, efd int) error {
+	a := eventFDArg{Handle: handle, Point: point, FD: int32(efd)}
+	return n.ioctl(ioctlEventFD, unsafe.Pointer(&a))
+}
+
+// Signal signals one timeline point from the CPU (DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL).
+// The compositor does this through its release timeline; clients use it only
+// to simulate that in tests.
+func (n *Node) Signal(handle uint32, point uint64) error {
+	h, p := handle, point
+	a := queryArg{Handles: uint64(uintptr(unsafe.Pointer(&h))), Points: uint64(uintptr(unsafe.Pointer(&p))), Count: 1}
+	errno := n.ioctlErrno(ioctlTimelineSig, unsafe.Pointer(&a))
+	runtime.KeepAlive(h)
+	runtime.KeepAlive(p)
+	if errno != 0 {
+		return ioctlError(ioctlTimelineSig, errno)
+	}
+	return nil
 }
 
 // ImportFence consumes syncFile only after FD_TO_HANDLE imports it into a
