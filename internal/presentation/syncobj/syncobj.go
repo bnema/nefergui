@@ -129,17 +129,6 @@ func (n *Node) ExportTimeline(handle uint32) (int, error) {
 	return int(a.FD), nil
 }
 
-// ImportTimeline turns a syncobj FD (as returned by ExportTimeline, possibly by
-// another process or Node) into a handle of this node. The FD stays owned by
-// the caller.
-func (n *Node) ImportTimeline(fd int) (uint32, error) {
-	a := handleArg{FD: int32(fd)}
-	if err := n.ioctl(ioctlFDToHandle, unsafe.Pointer(&a)); err != nil {
-		return 0, err
-	}
-	return a.Handle, nil
-}
-
 // EventFD arms efd, an eventfd owned by the caller, to become readable when
 // point of the timeline behind handle is signaled. The point need not be
 // submitted yet. The registration is one-shot: re-arm after every use. The
