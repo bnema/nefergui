@@ -4,6 +4,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/bnema/nefergui/internal/layout"
@@ -174,21 +175,9 @@ func TestRendererInputActivatesButtonAndRequestsRedraw(t *testing.T) {
 }
 
 func TestRendererTextInputUsesTextBytes(t *testing.T) {
-	r, tg := newTestRenderer(t)
 	value := ""
-	var out Output
 	view := func(f *Frame, v *string) { f.Root().Input("name", v, Key("name"), Inline("width:100px;height:20px")) }
-	tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
-	r.Resize(200, 100, 1)
-	drawOK(tg, nil).Maybe()
-	settle := func() {
-		for i := 0; i < 3; i++ {
-			if _, err := r.Render(&out, &value, view); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	settle()
+	r, settle := settledRenderer(t, &value, view)
 	r.Input(&Input{Kind: InputPointerPress, X: 5, Y: 5, Button: 0x110, Pressed: true})
 	r.Input(&Input{Kind: InputPointerRelease, X: 5, Y: 5, Button: 0x110})
 	settle()
@@ -273,5 +262,95 @@ func TestTextIntAndMasked(t *testing.T) {
 	c := r.committed.children
 	if len(c) != 4 || c[0].text != "Count: -42" || c[1].text != "•••" || c[2].text != "" || len([]rune(c[3].text)) != 300 {
 		t.Fatalf("texts: %q %q %q", c[0].text, c[1].text, c[2].text)
+	}
+}
+
+// settledRenderer returns a 200x100 renderer for view and a settle function
+// that renders until queued input has been applied.
+func settledRenderer[T any](t *testing.T, model *T, view func(*Frame, *T)) (*Renderer, func()) {
+	t.Helper()
+	r, tg := newTestRenderer(t)
+	tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
+	r.Resize(200, 100, 1)
+	drawOK(tg, nil).Maybe()
+	var out Output
+	settle := func() {
+		for i := 0; i < 3; i++ {
+			if _, err := r.Render(&out, model, view); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	settle()
+	return r, settle
+}
+
+func TestModifierBits(t *testing.T) {
+	// The values match neferclient's, so applications copy the bits as is.
+	if ModShift != 1 || ModCtrl != 2 || ModAlt != 4 || ModSuper != 8 || ModCapsLock != 16 || ModNumLock != 32 {
+		t.Fatal("modifier bit values changed")
+	}
+}
+
+// Caps Lock and Num Lock must not change shortcuts, selection or activation.
+func TestRendererLockModifiersDoNotChangeInput(t *testing.T) {
+	inputView := func(f *Frame, v *string) { f.Root().Input("name", v, Key("name"), Inline("width:100px;height:20px")) }
+	key := func(r *Renderer, keysym uint32, text string, mods Modifiers) {
+		in := &Input{Kind: InputKey, Keysym: keysym, Pressed: true, Modifiers: mods}
+		if text != "" {
+			in.Text = []byte(text)
+		}
+		r.Input(in)
+	}
+	click := func(r *Renderer, x float64, mods Modifiers) {
+		r.Input(&Input{Kind: InputPointerPress, X: x, Y: 5, Button: 0x110, Pressed: true, Modifiers: mods})
+		r.Input(&Input{Kind: InputPointerRelease, X: x, Y: 5, Button: 0x110, Modifiers: mods})
+	}
+	for _, lock := range []Modifiers{0, ModCapsLock, ModNumLock, ModCapsLock | ModNumLock} {
+		t.Run(fmt.Sprintf("lock=%#x", uint8(lock)), func(t *testing.T) {
+			t.Run("CtrlA and ShiftLeft", func(t *testing.T) {
+				value := "hello"
+				r, settle := settledRenderer(t, &value, inputView)
+				click(r, 5, lock)
+				settle()
+				key(r, 'a', "a", ModCtrl|lock) // select all
+				settle()
+				key(r, 'X', "X", lock)
+				settle()
+				if value != "X" {
+					t.Fatalf("Ctrl+A then text: value=%q, want X", value)
+				}
+				key(r, 0xff51, "", ModShift|lock) // extend selection left
+				settle()
+				key(r, 'y', "y", lock)
+				settle()
+				if value != "y" {
+					t.Fatalf("Shift+Left then text: value=%q, want y", value)
+				}
+			})
+			t.Run("ShiftClick", func(t *testing.T) {
+				value := "hello"
+				r, settle := settledRenderer(t, &value, inputView)
+				click(r, 1, lock)
+				settle()
+				click(r, 95, ModShift|lock) // select to the end
+				settle()
+				key(r, 'Z', "Z", lock)
+				settle()
+				if value != "Z" {
+					t.Fatalf("Shift+click then text: value=%q, want Z", value)
+				}
+			})
+			t.Run("TabReturn", func(t *testing.T) {
+				m := testModel{}
+				r, settle := settledRenderer(t, &m, testView)
+				key(r, 0xff09, "", lock)
+				key(r, 0xff0d, "", lock)
+				settle()
+				if m.clicks != 1 {
+					t.Fatalf("Tab+Return clicks=%d, want 1", m.clicks)
+				}
+			})
+		})
 	}
 }
