@@ -30,7 +30,7 @@ func ListBatches(frame Frame) ([]vkdevice.Instance, []vkdevice.Batch, ListStats)
 // The slices it returns alias its storage: they are valid only until the next
 // List or Release call, and must not be retained, shared across goroutines, or
 // used while another List may run. This is safe for consumers that copy the
-// data synchronously (Session.tick uploads instances into GPU memory and
+// data synchronously (Target.submit uploads instances into GPU memory and
 // resolve copies the batches before recording returns); anything that keeps the
 // slices past that point must use ListBatches instead. Retained frames hold
 // only render.Frame, never these slices, so a blocked frame is re-listed on retry.

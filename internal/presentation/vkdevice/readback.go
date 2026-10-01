@@ -11,7 +11,7 @@ import (
 	"github.com/bnema/purego-vulkan/vulkan"
 )
 
-// Readback is only allocated when NEFERGUI_DEBUG_DIR is set. Its transfer copy is
+// Readback is only allocated for tests. Its transfer copy is
 // recorded after drawing and before the acquire semaphore signals; mapping
 // waits for the submission fence, never for compositor release.
 type Readback struct {

@@ -557,7 +557,8 @@ func (t *Target) Readback(id uint64) (*image.NRGBA, error) {
 
 // Close waits for the GPU, then frees every descriptor and image, always
 // completing the teardown. The compositor's imports keep their own kernel
-// references. It returns the joined errors of the steps that failed.
+// references. It returns the joined errors of the steps that failed and any
+// Vulkan validation errors recorded during the Target's life.
 func (t *Target) Close() error {
 	if t == nil || t.closed {
 		return nil
@@ -590,6 +591,12 @@ func (t *Target) Close() error {
 			errs = append(errs, t.Node.Destroy(t.acquire))
 		}
 		errs = append(errs, t.Node.Close())
+	}
+	if t.Device != nil {
+		// Read the messages before Close destroys the messenger.
+		if msgs := t.Device.Validation.Messages(); len(msgs) > 0 {
+			errs = append(errs, fmt.Errorf("%d Vulkan validation errors: %v", len(msgs), msgs))
+		}
 	}
 	t.Device.Close()
 	return errors.Join(errs...)

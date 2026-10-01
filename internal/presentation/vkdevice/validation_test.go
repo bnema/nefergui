@@ -29,7 +29,7 @@ func TestValidationLayer(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	pipeline, err := d.NewRectPipeline(64, 64)
+	pipeline, err := d.NewListPipeline(64, 64)
 	if err != nil {
 		d.Close()
 		t.Fatal(err)

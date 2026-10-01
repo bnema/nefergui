@@ -4,24 +4,10 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/mock"
 )
 
-type memoryClipboard struct{ data []byte }
-
-func (m *memoryClipboard) ReadText(limit int) ([]byte, error) { return m.data, nil }
-func (m *memoryClipboard) WriteText(v []byte) error           { m.data = append([]byte(nil), v...); return nil }
-
-type fakeIME struct {
-	enabled, disabled int
-	surrounding       string
-	cursor, anchor    int
-}
-
-func (f *fakeIME) Enable()                              { f.enabled++ }
-func (f *fakeIME) Disable()                             { f.disabled++ }
-func (f *fakeIME) Surrounding(v string, c, a int)       { f.surrounding = v; f.cursor = c; f.anchor = a }
-func (f *fakeIME) CursorRect(x, y, w, h float64)        {}
-func (f *fakeIME) ContentType(password, multiline bool) {}
 func TestGraphemesAndIME(t *testing.T) {
 	s := State{}
 	s.Sync("e\u0301👩‍💻a")
@@ -46,33 +32,41 @@ func TestGraphemesAndIME(t *testing.T) {
 	if s.Preedit != "候補" || s.Value != "éa" {
 		t.Fatal(s)
 	}
-	ime := &fakeIME{}
+	ime := NewMockIME(t)
+	ime.EXPECT().Enable().Once()
+	ime.EXPECT().Surrounding("éa", mock.Anything, mock.Anything).Maybe()
+	ime.EXPECT().CursorRect(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	ime.EXPECT().ContentType(false, false).Once()
+	ime.EXPECT().Disable().Once()
 	s.Focus(ime, false, false)
 	s.Blur(ime)
-	if ime.enabled != 1 || ime.disabled != 1 || s.Preedit != "" {
-		t.Fatal(s, ime)
+	if s.Preedit != "" {
+		t.Fatal(s)
 	}
 }
 func TestClipboardAndMask(t *testing.T) {
 	s := State{}
 	s.Sync("s3crét")
 	s.Select(0, len(s.Value))
-	c := &memoryClipboard{}
-	if err := s.Copy(c, true); err != nil || len(c.data) != 0 {
+	c := NewMockClipboard(t) // a masked copy must not write
+	if err := s.Copy(c, true); err != nil {
 		t.Fatal(err)
 	}
 	if s.Mask() != "••••••" {
 		t.Fatal(s.Mask())
 	}
-	c.data = []byte{0xff}
+	read := func(data []byte) {
+		c.EXPECT().ReadText(mock.Anything).Return(data, nil).Once()
+	}
+	read([]byte{0xff})
 	if changed, _ := s.Paste(c); changed {
 		t.Fatal(s)
 	}
-	c.data = []byte(strings.Repeat("x", MaxClipboardBytes+1))
+	read([]byte(strings.Repeat("x", MaxClipboardBytes+1)))
 	if changed, _ := s.Paste(c); changed {
 		t.Fatal(s)
 	}
-	c.data = []byte("ok")
+	read([]byte("ok"))
 	if changed, _ := s.Paste(c); !changed || s.Value != "ok" {
 		t.Fatal(s)
 	}

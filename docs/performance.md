@@ -6,7 +6,7 @@ Measured: **2026-09-30, 07:52–07:54 CEST (UTC+02:00)** on commit `7ad3316fd1ad
 
 AMD Ryzen 9 7900X3D; Go `go1.27.1-X:nodwarf5 linux/amd64`. Command: `CGO_ENABLED=0 GOWORK=off go test -mod=readonly -p=1 -run '^$' -bench . -benchmem -count=5 ./internal/ui ./internal/render ./internal/layout ./internal/text ./internal/css`. Package benchmarks run serially; external profiling runs are separate. Entries are medians of five runs. Budgets allow roughly twice the measured medians; zero-allocation paths stay at zero. DemoFrame has a deliberately tighter 1,100-allocation limit to catch editor-workspace regressions. CPU numbers vary with machine load.
 
-The demo-frame benchmark builds the light, comfortable document workspace with the example's actual stylesheet, computes layout and produces a display list after warmup. It includes the toolbar, document list, populated multiline editor and properties pane with input, radios and slider; it excludes GPU submission. Its workload is larger than the older unstyled fixture, so those results are not directly comparable. Prepare uses a representative text/box command mix and excludes GPU submission. Paint uses 100 cards with two shadows and text; ListBatches uses 2,000 quads with interleaved images. ListBufferReuse and LayoutPaintTree warm their buffers and text cache before resetting the timer; their figures measure steady state.
+The demo-frame benchmark builds the light, comfortable document workspace with a demo stylesheet (`internal/ui/testdata/demo.css`), computes layout and produces a display list after warmup. It includes the toolbar, document list, populated multiline editor and properties pane with input, radios and slider; it excludes GPU submission. Its workload is larger than the older unstyled fixture, so those results are not directly comparable. Prepare uses a representative text/box command mix and excludes GPU submission. Paint uses 100 cards with two shadows and text; ListBatches uses 2,000 quads with interleaved images. ListBufferReuse and LayoutPaintTree warm their buffers and text cache before resetting the timer; their figures measure steady state.
 
 | Package / benchmark | Median ns/op | Median B/op | Median allocs/op | Budget ns/op | Budget B/op | Budget allocs/op |
 |---|---:|---:|---:|---:|---:|---:|
@@ -29,24 +29,17 @@ The demo-frame benchmark builds the light, comfortable document workspace with t
 
 Natural container measurement prevents nested flex text from collapsing, at a CPU cost that grows with nesting depth. Layout1000 measures about 36% slower than the earlier 656 µs run; allocation count stays at 1,027. A per-layout node/width cache increased time and retained allocation in a trial and is not used. LayoutPaintTree stays near its previous cost. These are correctness/performance tradeoffs, not a claim of universal speed improvement.
 
-`TestDemoFrameAllocationBudget` checks the 1,100 allocs/op limit with `testing.AllocsPerRun`. Focused tests also check constant quad allocation, bounded paint allocation, allocation-free warm list-buffer reuse, and allocation-free idle wait results. The real-ioctl allocation test is opt-in via `NEFERGUI_RENDER_NODE`. The other table budgets are reference targets, not automated assertions.
+`TestAllocDemoFrame` checks the 1,100 allocs/op limit with `testing.AllocsPerRun`. `TestAllocRendererSteadyFrame` measures `Renderer.Render` for a view whose text changes through `TextInt`; it measured 244 allocations per steady Render+Released cycle on 2026-10-01 (the guard fails above that baseline), needs a GPU, and is skipped unless `NEFERGUI_RENDER_NODE` is set. Focused tests also check constant quad allocation, bounded paint allocation, allocation-free warm list-buffer reuse and allocation-free idle wait results (the real-ioctl variant is opt-in via `NEFERGUI_RENDER_NODE`). The other table budgets are reference targets, not automated assertions.
 
 Frame construction limits allocation churn through:
 
 - a detached quad array initially reserved up to 512 quads; larger visible frames grow after culling, so offscreen content cannot force an unbounded speculative allocation;
 - detached display-list storage sized once for commands, shadows, runs and glyphs;
-- a session-owned instance/batch buffer, consumed synchronously before reuse, with image references cleared after use and oversized storage discarded when smaller frames arrive;
+- a target-owned instance/batch buffer, consumed synchronously before reuse, with image references cleared after use and oversized storage discarded when smaller frames arrive;
 - font family normalization at font load and identity path keys computed once per element;
 - `text.Engine.Measure` caching by text, request and width. Entries unused for two frames are evicted; the cache holds at most 4,096 entries. Results are immutable; callers use `Layout.Clone` before adjusting positions.
 
-`Run` builds a frame only on input or a redraw request. Idle frame construction stops. Expected release-wait timeouts return without constructing errors; real ioctl failures retain their context and wrapped errno.
-
-On commit `9064a73`, measured **2026-09-30, 06:34 CEST**, `BenchmarkWaitPointIdle` on an unsignaled real DRM timeline took a median **21,370,548 ns/op, 0 B/op, 0 allocs/op**. This includes the requested 20 ms timeout, not active CPU time:
-
-```sh
-NEFERGUI_RENDER_NODE=/dev/dri/renderD128 CGO_ENABLED=0 GOWORK=off \
-  go test -run '^$' -bench BenchmarkWaitPointIdle -benchtime=10x -benchmem -count=5 ./internal/presentation/syncobj
-```
+`Renderer.Render` builds a frame only on input or a redraw request. Idle frame construction stops.
 
 Profile frame construction with:
 
@@ -77,14 +70,10 @@ An external Go module with minimal-counter and demo views, a 960×640 window at 
 
 Heap/RSS/PSS use the default Go profiling rate. Allocation figures use separate `GODEBUG=memprofilerate=1` runs: subtract cumulative profiles at frames 1 and 1,000, exclude stacks containing the measurement sampler or `runtime/pprof`, sum the remaining flat allocated bytes, then divide by 999 frames. These runs recorded about **41–43% less allocation churn** than the baseline. They do not demonstrate an equivalent reduction in RSS or frame latency. Single-run process-memory values vary with runtime and driver behavior.
 
-The minimal view starts at about 0.75 MiB live Go heap, reaches 5.1 MiB after the first frame, and returns to about 0.9 MiB after closing. No sustained live-heap growth was observed over 3,000 frames. Retained heap stayed close to baseline; the session's reusable conversion buffers retain a small amount of storage. Driver mappings and Go heap capacity can remain resident after closing; RSS is not a leak measurement on its own.
+The minimal view starts at about 0.75 MiB live Go heap, reaches 5.1 MiB after the first frame, and returns to about 0.9 MiB after closing. No sustained live-heap growth was observed over 3,000 frames. Retained heap stayed close to baseline; the reusable conversion buffers retain a small amount of storage. Driver mappings and Go heap capacity can remain resident after closing; RSS is not a leak measurement on its own.
 
 DRM counters reported about 41 MiB VRAM and 4 MiB GTT once all three presentation buffers were active, unchanged from baseline and released at shutdown. Window dimensions, scale, fonts and driver affect these figures. These are measurements on one stack, not portable limits.
 
-A separate approximately 20-second idle profile recorded about **91 KiB** allocated under `syncobj.WaitPoint` in the baseline and **no allocations attributed to that path** on the measured implementation. Other runtime and consumer instrumentation allocations remain; this is not a claim that the whole process allocates nothing at idle.
-
-The measured commit includes `purego-vulkan` v0.6.0, `wlturbo` v0.3.0 and `typesetting` v0.3.5. The subsequent `2e4532d` commit adds an empty-glyph regression test and raises the minimum compositor version checked at startup; it does not change the measured frame paths on this version-6 compositor. The comparison therefore includes both library optimizations and dependency updates, not isolated effects for each.
-
-Prepared quads and layout painting still allocate detached outputs. Editor and indicator command insertion can also reallocate the display list; those UI-owned costs are included in the demo measurements and are not optimized here. Glyph rasterization and glyph-key hashing also appear in cumulative allocation profiles. `NEFERGUI_DEBUG_DIR` enables readbacks and PNG work; leave it unset when measuring ordinary application cost.
+Prepared quads and layout painting still allocate detached outputs. Editor and indicator command insertion can also reallocate the display list; those UI-owned costs are included in the demo measurements and are not optimized here. Glyph rasterization and glyph-key hashing also appear in cumulative allocation profiles.
 
 Use `pprof`'s `alloc_space` to find cumulative allocation churn and `inuse_space` after GC to inspect retained Go memory. Use `/proc/<pid>/smaps_rollup` for RSS/PSS and DRM fdinfo for GPU counters; heap profiles do not include driver or GPU memory.

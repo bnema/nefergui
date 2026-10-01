@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/platform/wayland"
 	"github.com/bnema/nefergui/internal/text"
 )
 
@@ -256,13 +255,13 @@ func TestCursorFollowsHoverAndCapture(t *testing.T) {
 	}
 	for _, c := range []struct {
 		y    float64
-		want uint32
-	}{{2, wayland.CursorPointer}, {22, wayland.CursorText}, {42, wayland.CursorNotAllowed}, {62, wayland.CursorDefault}} {
-		if got := cursorShape(at("motion", c.y)); got != c.want {
+		want Cursor
+	}{{2, CursorPointer}, {22, CursorText}, {42, CursorNotAllowed}, {62, CursorDefault}} {
+		if got := cursorOf(at("motion", c.y)); got != c.want {
 			t.Errorf("y=%v shape %v, want %v", c.y, got, c.want)
 		}
 	}
-	if cursorShape(css.KeywordAuto) != cursorShape(css.KeywordDefault) {
+	if cursorOf(css.KeywordAuto) != cursorOf(css.KeywordDefault) {
 		t.Error("auto must map to the default shape")
 	}
 	// Press on the input, drag over the button: the input keeps its cursor.

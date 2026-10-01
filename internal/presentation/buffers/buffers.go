@@ -1,5 +1,5 @@
-// Package buffers models Wayland/Vulkan buffer ownership without GPU dependencies.
-// The caller serializes events from the renderer, the Wayland dispatch loop, and DRM.
+// Package buffers models buffer ownership between the renderer and the
+// compositor without GPU dependencies. The caller serializes all events.
 package buffers
 
 import (

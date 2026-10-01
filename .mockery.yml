@@ -14,3 +14,25 @@ packages:
       filename: '{{.InterfaceName}}_mock_test.go'
     interfaces:
       target:
+  # Editor ports: same-package mocks in test files.
+  github.com/bnema/nefergui/internal/edit:
+    config:
+      dir: internal/edit
+      pkgname: edit
+      filename: '{{.InterfaceName}}_mock_test.go'
+    interfaces:
+      IME:
+        configs:
+          - {}
+          # Also mocked next to the UI tests that drive the editors.
+          - dir: internal/ui
+            pkgname: ui
+      Clipboard:
+        configs:
+          - {}
+          - dir: internal/ui
+            pkgname: ui
+      AsyncClipboard:
+        configs:
+          - dir: internal/ui
+            pkgname: ui

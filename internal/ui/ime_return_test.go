@@ -14,7 +14,7 @@ func typed(name, text string) platformInput {
 // keys that still arrive on wl_keyboard were not consumed and must be typed.
 func TestKeyboardTextInsertedWhileIMEEnabled(t *testing.T) {
 	r := newRuntime()
-	ime := &orderedIME{}
+	ime, calls := newOrderedIME(t)
 	r.ime = ime
 	value := "ab"
 	view := func(f *Frame) { f.Root().Textarea("message", &value) }
@@ -28,7 +28,7 @@ func TestKeyboardTextInsertedWhileIMEEnabled(t *testing.T) {
 		r.route(k)
 		r.Build(view)
 	}
-	if value != "abca\n\n" || len(ime.calls) == 0 {
+	if value != "abca\n\n" || len(*calls) == 0 {
 		t.Fatalf("keyboard text lost while IME enabled: %q", value)
 	}
 
