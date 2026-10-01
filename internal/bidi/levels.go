@@ -47,6 +47,14 @@ func Resolve(text []rune, base BaseDirection, lineBreaks []int) ([]uint8, uint8,
 		}
 		prev = end
 	}
+	if base != RTL && leftToRightOnly(text) {
+		return make([]uint8, len(text)), 0, nil
+	}
+	return resolveFull(text, base, lineBreaks)
+}
+
+// resolveFull runs the complete UAX#9 algorithm on validated input.
+func resolveFull(text []rune, base BaseDirection, lineBreaks []int) ([]uint8, uint8, error) {
 	classes := make([]Class, len(text))
 	pairTypes := make([]bracketType, len(text))
 	pairValues := make([]rune, len(text))
@@ -90,6 +98,24 @@ func Resolve(text []rune, base BaseDirection, lineBreaks []int) ([]uint8, uint8,
 		out[i] = uint8(l)
 	}
 	return out, uint8(p.embeddingLevel), nil
+}
+
+// leftToRightOnly reports whether every rune resolves to level 0 in a level-0
+// paragraph: with no R, AL, AN, explicit formatting or BN, P2/P3 pick level 0,
+// W7 turns EN into L (sos is L), neutrals resolve to L and I1 raises nothing.
+// B is left to the full algorithm, which validates its position.
+func leftToRightOnly(text []rune) bool {
+	for _, r := range text {
+		if r < 0x80 && r >= 0x20 && r != 0x7f {
+			continue // printable ASCII: L, EN, ES, ET, CS, WS or ON
+		}
+		prop, _ := LookupRune(r)
+		switch prop.Class() {
+		case R, AL, AN, B, BN, LRO, RLO, LRE, RLE, PDF, LRI, RLI, FSI, PDI:
+			return false
+		}
+	}
+	return true
 }
 
 // Reorder returns a visual-to-logical rune map per line using L2; X9-removed
