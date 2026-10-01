@@ -124,6 +124,37 @@ func TestPrepareQuadAllocationsDoNotScaleWithCommands(t *testing.T) {
 	}
 }
 
+// PrepareInto reuses the caller's quads, so a steady frame allocates nothing,
+// and stale references from a longer frame are cleared.
+func TestPrepareIntoReusesQuads(t *testing.T) {
+	p, err := NewPreparer(256, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, err := p.PrepareInto(nil, rectCommands(8), 1, 100, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quads := long.Quads
+	short, err := p.PrepareInto(quads, rectCommands(3), 1, 100, 1000)
+	if err != nil || len(short.Quads) != 3 || &short.Quads[0] != &quads[0] {
+		t.Fatalf("not reused: %v %d", err, len(short.Quads))
+	}
+	if tail := quads[3:8]; tail[0] != (Quad{}) || tail[4] != (Quad{}) {
+		t.Fatal("stale quads kept past the new length")
+	}
+	cmds := rectCommands(64)
+	if allocs := testing.AllocsPerRun(20, func() {
+		f, err := p.PrepareInto(quads, cmds, 1, 100, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		quads = f.Quads
+	}); allocs != 0 {
+		t.Fatalf("PrepareInto allocs=%v, want 0", allocs)
+	}
+}
+
 func BenchmarkPrepareBoxes(b *testing.B) {
 	p, err := NewPreparer(256, 2)
 	if err != nil {
