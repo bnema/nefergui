@@ -4,6 +4,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/bnema/nefergui/internal/layout"
@@ -174,21 +175,9 @@ func TestRendererInputActivatesButtonAndRequestsRedraw(t *testing.T) {
 }
 
 func TestRendererTextInputUsesTextBytes(t *testing.T) {
-	r, tg := newTestRenderer(t)
 	value := ""
-	var out Output
 	view := func(f *Frame, v *string) { f.Root().Input("name", v, Key("name"), Inline("width:100px;height:20px")) }
-	tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
-	r.Resize(200, 100, 1)
-	drawOK(tg, nil).Maybe()
-	settle := func() {
-		for i := 0; i < 3; i++ {
-			if _, err := r.Render(&out, &value, view); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	settle()
+	r, settle := settledRenderer(t, &value, view)
 	r.Input(&Input{Kind: InputPointerPress, X: 5, Y: 5, Button: 0x110, Pressed: true})
 	r.Input(&Input{Kind: InputPointerRelease, X: 5, Y: 5, Button: 0x110})
 	settle()
@@ -276,109 +265,92 @@ func TestTextIntAndMasked(t *testing.T) {
 	}
 }
 
-func TestRendererLockModifiersDoNotChangeKeyHandling(t *testing.T) {
-	locks := []Modifiers{0, ModCapsLock, ModNumLock, ModCapsLock | ModNumLock}
+// settledRenderer returns a 200x100 renderer for view and a settle function
+// that renders until queued input has been applied.
+func settledRenderer[T any](t *testing.T, model *T, view func(*Frame, *T)) (*Renderer, func()) {
+	t.Helper()
+	r, tg := newTestRenderer(t)
+	tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
+	r.Resize(200, 100, 1)
+	drawOK(tg, nil).Maybe()
+	var out Output
+	settle := func() {
+		for i := 0; i < 3; i++ {
+			if _, err := r.Render(&out, model, view); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	settle()
+	return r, settle
+}
+
+func TestModifierBits(t *testing.T) {
+	// The values match neferclient's, so applications copy the bits as is.
 	if ModShift != 1 || ModCtrl != 2 || ModAlt != 4 || ModSuper != 8 || ModCapsLock != 16 || ModNumLock != 32 {
 		t.Fatal("modifier bit values changed")
 	}
-	for _, lock := range locks {
-		r, tg := newTestRenderer(t)
-		value := "hello"
-		var out Output
-		view := func(f *Frame, v *string) { f.Root().Input("name", v, Key("name"), Inline("width:100px;height:20px")) }
-		tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
-		r.Resize(200, 100, 1)
-		drawOK(tg, nil).Maybe()
-		settle := func() {
-			for i := 0; i < 3; i++ {
-				if _, err := r.Render(&out, &value, view); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-		settle()
-		r.Input(&Input{Kind: InputPointerPress, X: 5, Y: 5, Button: 0x110, Pressed: true, Modifiers: lock})
-		r.Input(&Input{Kind: InputPointerRelease, X: 5, Y: 5, Button: 0x110, Modifiers: lock})
-		settle()
-		// Ctrl+A selects all, so the next text replaces the value.
-		r.Input(&Input{Kind: InputKey, Keysym: 'a', Pressed: true, Text: []byte("a"), Modifiers: ModCtrl | lock})
-		settle()
-		r.Input(&Input{Kind: InputKey, Keysym: 'X', Pressed: true, Text: []byte("X"), Modifiers: lock})
-		settle()
-		if value != "X" {
-			t.Fatalf("lock=%#x: Ctrl+A then text: value=%q, want X", lock, value)
-		}
-		// Shift+Left extends the selection, so the next text replaces "X".
-		r.Input(&Input{Kind: InputKey, Keysym: 0xff51, Pressed: true, Modifiers: ModShift | lock})
-		settle()
-		r.Input(&Input{Kind: InputKey, Keysym: 'y', Pressed: true, Text: []byte("y"), Modifiers: lock})
-		settle()
-		if value != "y" {
-			t.Fatalf("lock=%#x: Shift+Left then text: value=%q, want y", lock, value)
-		}
-	}
 }
 
-func TestRendererLockModifiersDoNotChangeTabAndReturn(t *testing.T) {
+// Caps Lock and Num Lock must not change shortcuts, selection or activation.
+func TestRendererLockModifiersDoNotChangeInput(t *testing.T) {
+	inputView := func(f *Frame, v *string) { f.Root().Input("name", v, Key("name"), Inline("width:100px;height:20px")) }
+	key := func(r *Renderer, keysym uint32, text string, mods Modifiers) {
+		in := &Input{Kind: InputKey, Keysym: keysym, Pressed: true, Modifiers: mods}
+		if text != "" {
+			in.Text = []byte(text)
+		}
+		r.Input(in)
+	}
+	click := func(r *Renderer, x float64, mods Modifiers) {
+		r.Input(&Input{Kind: InputPointerPress, X: x, Y: 5, Button: 0x110, Pressed: true, Modifiers: mods})
+		r.Input(&Input{Kind: InputPointerRelease, X: x, Y: 5, Button: 0x110, Modifiers: mods})
+	}
 	for _, lock := range []Modifiers{0, ModCapsLock, ModNumLock, ModCapsLock | ModNumLock} {
-		r, tg := newTestRenderer(t)
-		m := testModel{}
-		var out Output
-		tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
-		r.Resize(200, 100, 1)
-		drawOK(tg, nil).Maybe()
-		settle := func() {
-			for i := 0; i < 3; i++ {
-				if _, err := r.Render(&out, &m, testView); err != nil {
-					t.Fatal(err)
+		t.Run(fmt.Sprintf("lock=%#x", uint8(lock)), func(t *testing.T) {
+			t.Run("CtrlA and ShiftLeft", func(t *testing.T) {
+				value := "hello"
+				r, settle := settledRenderer(t, &value, inputView)
+				click(r, 5, lock)
+				settle()
+				key(r, 'a', "a", ModCtrl|lock) // select all
+				settle()
+				key(r, 'X', "X", lock)
+				settle()
+				if value != "X" {
+					t.Fatalf("Ctrl+A then text: value=%q, want X", value)
 				}
-			}
-		}
-		settle()
-		r.Input(&Input{Kind: InputKey, Keysym: 0xff09, Pressed: true, Modifiers: lock})
-		r.Input(&Input{Kind: InputKey, Keysym: 0xff0d, Pressed: true, Modifiers: lock})
-		settle()
-		if m.clicks != 1 {
-			t.Fatalf("lock=%#x: Tab+Return clicks=%d, want 1", lock, m.clicks)
-		}
-	}
-}
-
-func TestRendererLockModifiersDoNotChangeShiftClick(t *testing.T) {
-	run := func(lock Modifiers) string {
-		r, tg := newTestRenderer(t)
-		value := "hello"
-		var out Output
-		view := func(f *Frame, v *string) { f.Root().Input("name", v, Key("name"), Inline("width:100px;height:20px")) }
-		tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
-		r.Resize(200, 100, 1)
-		drawOK(tg, nil).Maybe()
-		settle := func() {
-			for i := 0; i < 3; i++ {
-				if _, err := r.Render(&out, &value, view); err != nil {
-					t.Fatal(err)
+				key(r, 0xff51, "", ModShift|lock) // extend selection left
+				settle()
+				key(r, 'y', "y", lock)
+				settle()
+				if value != "y" {
+					t.Fatalf("Shift+Left then text: value=%q, want y", value)
 				}
-			}
-		}
-		settle()
-		click := func(x float64, mods Modifiers) {
-			r.Input(&Input{Kind: InputPointerPress, X: x, Y: 5, Button: 0x110, Pressed: true, Modifiers: mods})
-			r.Input(&Input{Kind: InputPointerRelease, X: x, Y: 5, Button: 0x110, Modifiers: mods})
-			settle()
-		}
-		click(1, lock)
-		click(95, ModShift|lock)
-		r.Input(&Input{Kind: InputKey, Keysym: 'Z', Pressed: true, Text: []byte("Z"), Modifiers: lock})
-		settle()
-		return value
-	}
-	want := run(0)
-	if want != "Z" {
-		t.Fatalf("Shift+click then text: value=%q, want Z", want)
-	}
-	for _, lock := range []Modifiers{ModCapsLock, ModNumLock, ModCapsLock | ModNumLock} {
-		if got := run(lock); got != want {
-			t.Fatalf("lock=%#x: value=%q, want %q", lock, got, want)
-		}
+			})
+			t.Run("ShiftClick", func(t *testing.T) {
+				value := "hello"
+				r, settle := settledRenderer(t, &value, inputView)
+				click(r, 1, lock)
+				settle()
+				click(r, 95, ModShift|lock) // select to the end
+				settle()
+				key(r, 'Z', "Z", lock)
+				settle()
+				if value != "Z" {
+					t.Fatalf("Shift+click then text: value=%q, want Z", value)
+				}
+			})
+			t.Run("TabReturn", func(t *testing.T) {
+				m := testModel{}
+				r, settle := settledRenderer(t, &m, testView)
+				key(r, 0xff09, "", lock)
+				key(r, 0xff0d, "", lock)
+				settle()
+				if m.clicks != 1 {
+					t.Fatalf("Tab+Return clicks=%d, want 1", m.clicks)
+				}
+			})
+		})
 	}
 }
