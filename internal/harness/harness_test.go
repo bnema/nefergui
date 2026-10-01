@@ -97,7 +97,14 @@ func TestConfig(t *testing.T) {
 			t.Fatalf("missing %s", s)
 		}
 	}
-	for _, tc := range [][4]string{{"0x600", "1", "fr", "#336699"}, {"800x600", "5", "fr", "#336699"}, {"800x600", "1", "fr\nstartup = bad", "#336699"}, {"800x600", "1", "fr", "red"}} {
+	multi, err := Config("800x600,320x200", "1", "us", "#000000")
+	if err != nil || !strings.Contains(multi, "output.HEADLESS-1 = 800x600\n") || !strings.Contains(multi, "output.HEADLESS-2 = 320x200\noutput.HEADLESS-2.scale = 1\n") {
+		t.Fatalf("multi-output config: %v\n%s", err, multi)
+	}
+	if FramesDir("f", "800x600") != "f" || FramesDir("f", "800x600,320x200") != filepath.Join("f", "HEADLESS-1") {
+		t.Fatal("frames dir")
+	}
+	for _, tc := range [][4]string{{"0x600", "1", "fr", "#336699"}, {"800x600,", "1", "fr", "#336699"}, {"800x600", "5", "fr", "#336699"}, {"800x600", "1", "fr\nstartup = bad", "#336699"}, {"800x600", "1", "fr", "red"}} {
 		if _, err := Config(tc[0], tc[1], tc[2], tc[3]); err == nil {
 			t.Fatalf("accepted %v", tc)
 		}

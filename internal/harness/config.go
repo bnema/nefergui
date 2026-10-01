@@ -10,7 +10,9 @@ import (
 	"strings"
 )
 
-var sizePattern = regexp.MustCompile(`^[1-9][0-9]*x[1-9][0-9]*$`)
+// sizePattern accepts one headless output size, or several comma-separated
+// ones (HEADLESS-1, HEADLESS-2, ... left to right).
+var sizePattern = regexp.MustCompile(`^[1-9][0-9]*x[1-9][0-9]*(,[1-9][0-9]*x[1-9][0-9]*)*$`)
 var layoutPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 var socketPattern = regexp.MustCompile(`^wayland-[0-9]+$`)
 
@@ -26,7 +28,21 @@ func Config(size, scale, layout, background string) (string, error) {
 	}
 	// Wayland debug logs record each client cursor shape change, which
 	// systemtests read from the compositor run log.
-	return fmt.Sprintf("output.HEADLESS-1 = %s\noutput.HEADLESS-1.scale = %s\nkeyboard.layout = %s\nbackground = %s\nlog.debug = wayland\n", size, scale, layout, background), nil
+	var b strings.Builder
+	for i, s := range strings.Split(size, ",") {
+		fmt.Fprintf(&b, "output.HEADLESS-%d = %s\noutput.HEADLESS-%d.scale = %s\n", i+1, s, i+1, scale)
+	}
+	fmt.Fprintf(&b, "keyboard.layout = %s\nbackground = %s\nlog.debug = wayland\n", layout, background)
+	return b.String(), nil
+}
+
+// FramesDir is where NeferWL writes the screenshots of the first output: the
+// frames directory itself, or its HEADLESS-1 subdirectory with several outputs.
+func FramesDir(frames, size string) string {
+	if strings.Contains(size, ",") {
+		return filepath.Join(frames, "HEADLESS-1")
+	}
+	return frames
 }
 
 // DiscoverSocket only accepts a real Unix socket paired with NeferWL's state file.

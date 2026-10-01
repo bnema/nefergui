@@ -62,6 +62,10 @@ type LayerOptions struct {
 	// compositor choose its preferred output. A named output that is absent
 	// fails the connection; a named output removed later closes the window.
 	Output string
+	// OutputGlobal, when non-zero, selects an output lifetime returned by
+	// Connection.Outputs instead of Output. The connection owner handles its
+	// removal (OutputRemoved); the window is not closed for it.
+	OutputGlobal uint32
 	// Namespace is the layer surface namespace; empty selects DefaultLayerNamespace.
 	Namespace string
 	// Anchor is a bit set of Anchor* values.
@@ -119,6 +123,8 @@ func (o LayerOptions) Validate() error {
 		return errors.New("layer namespace contains NUL")
 	case strings.ContainsRune(o.Output, 0):
 		return errors.New("layer output contains NUL")
+	case o.OutputGlobal != 0 && o.Output != "":
+		return errors.New("layer output name and global are exclusive")
 	}
 	return nil
 }
@@ -317,7 +323,16 @@ func (w *Window) createLayerSurface(o LayerOptions) error {
 		return &CapabilityError{Name: layershell.LayerShellInterface, Cause: fmt.Errorf("on-demand keyboard requires version 4, compositor negotiated %d", w.LayerShell.Version())}
 	}
 	var out *core.Output
-	if o.Output != "" {
+	if o.OutputGlobal != 0 {
+		if w.connection == nil {
+			return errors.New("layer output global requires a connection")
+		}
+		sel, ok := w.connection.outputs[o.OutputGlobal]
+		if !ok || sel.proxy == nil {
+			return fmt.Errorf("layer output %d unavailable", o.OutputGlobal)
+		}
+		out = sel.proxy
+	} else if o.Output != "" {
 		var global uint32
 		var err error
 		if out, global, err = w.selectOutput(o.Output); err != nil {

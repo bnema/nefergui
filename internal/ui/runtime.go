@@ -52,6 +52,7 @@ type runtime struct {
 	pasteID               uint64
 	ime                   edit.IME
 	redraw                bool
+	consumed              bool // the last committed build handled input events
 	inputRects            []Rect
 	inputOut              []wayland.Rect
 	inputNil, inputStaged bool
@@ -185,6 +186,7 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	if len(events) > 0 {
 		r.redraw = true
 	}
+	r.consumed = len(events) > 0
 	// Release every losing editor before enabling the winner: the IME port
 	// represents one seat, not one port per editor. Never depend on map order.
 	for id, editor := range r.edits {
@@ -245,6 +247,13 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	return true
 }
 
+// consumedInput reports whether the last committed build handled input events.
+func (r *runtime) consumedInput() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.consumed
+}
+
 // Wait blocks until input/redraw is available or the context is cancelled.
 func (r *runtime) Wait(ctx context.Context) error {
 	select {
@@ -291,6 +300,12 @@ func runWithCommit[T any](ctx context.Context, model *T, view func(*Frame, *T), 
 	}
 	if cfg.width <= 0 || cfg.height <= 0 || int64(cfg.width) > 1<<31-1 || int64(cfg.height) > 1<<31-1 {
 		return fmt.Errorf("nefergui: invalid size %dx%d", cfg.width, cfg.height)
+	}
+	if cfg.layer != nil && cfg.layer.AllOutputs {
+		if committed != nil {
+			return errors.New("nefergui: AllOutputs excludes RunFrames")
+		}
+		return runAllOutputs(ctx, cfg, func(f *Frame) { view(f, model) })
 	}
 	r := newRuntime()
 	if cfg.styles != "" {

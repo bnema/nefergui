@@ -2,7 +2,7 @@
 
 `go run ./cmd/nefergui-harness run --size 800x600 --scale 1.5 --layout fr --input script.txt --expect expect.json --out artifacts -- <client> [args...]`
 
-Omit `-- <client>` for a compositor-only run. The output directory must not exist. `--background '#336699'` sets the compositor background (default `#111111`). `--timeout 15s` limits the whole run, including the build (which is separately capped at three minutes); `--ready-timeout 8s` bounds socket discovery. `--keep` preserves the isolated runtime/config directory and records its location in `result.json`.
+`--size 800x600,320x200` starts one headless output per size (`HEADLESS-1`, `HEADLESS-2`, ...); screenshots and expectations then use the first output, in `frames/HEADLESS-1/`. Omit `-- <client>` for a compositor-only run. The output directory must not exist. `--background '#336699'` sets the compositor background (default `#111111`). `--timeout 15s` limits the whole run, including the build (which is separately capped at three minutes); `--ready-timeout 8s` bounds socket discovery. `--keep` preserves the isolated runtime/config directory and records its location in `result.json`.
 
 The harness installs NeferWL from pinned commit `1d16b83bf90f9e8189ad21b27772382c96b9f9a8` into `$XDG_CACHE_HOME/nefergui/harness/neferwl-<sha>/` on first use. `NEFERGUI_NEFERWL` selects an existing executable instead, but requires `--allow-unpinned`; this records `compositor.pinned=false` and `compositor.binary` in `result.json`. Pinned runs record `compositor.pinned=true` and `compositor.sha`. Installation uses `GOWORK=off`, a remote module, and no local replacement. A host Vulkan GPU and working NeferWL runtime are needed for integration.
 

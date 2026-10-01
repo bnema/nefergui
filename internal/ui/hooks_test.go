@@ -58,6 +58,8 @@ func TestLayerConfigRejectsInvalid(t *testing.T) {
 		"bad keyboard": {Level: LayerTop, Keyboard: 7},
 		"empty rect":   {Level: LayerTop, InputRects: []Rect{{Width: 0, Height: 5}}},
 		"nul output":   {Level: LayerTop, Output: "a\x00"},
+		"all+output":   {Level: LayerTop, AllOutputs: true, Output: "DP-1"},
+		"all+keyboard": {Level: LayerTop, AllOutputs: true, Keyboard: KeyboardOnDemand},
 	} {
 		if _, err := c.surfaceOptions(); err == nil {
 			t.Errorf("%s: expected error", name)
@@ -182,6 +184,23 @@ func TestExternalWakeForcesBuild(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("forwarder did not stop on close")
+	}
+}
+
+// AllOutputs redraws the other surfaces only after a build that handled events.
+func TestBuildReportsConsumedInput(t *testing.T) {
+	r := newRuntime()
+	view := func(f *Frame) { f.Root().Button("Go", Key("go")) }
+	r.Build(view)
+	if r.consumedInput() {
+		t.Fatal("first build consumed nothing")
+	}
+	r.Queue(inputEvent{Target: r.Target(0), Kind: "activate"})
+	if !r.Build(view) || !r.consumedInput() {
+		t.Fatal("event build not reported")
+	}
+	if !r.Build(view) || r.consumedInput() {
+		t.Fatal("follow-up build must not report events")
 	}
 }
 

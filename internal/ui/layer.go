@@ -52,7 +52,13 @@ type Rect struct{ X, Y, Width, Height int32 }
 // edges); 0 reserves nothing and asks to avoid other surfaces' positive zones;
 // -1 ignores other exclusive zones and extends to the anchored output edges.
 type LayerConfig struct {
-	Output        string // output name; empty lets the compositor choose
+	Output string // output name; empty lets the compositor choose
+	// AllOutputs puts one surface on every output, including outputs added
+	// while Run is running; removed outputs lose theirs. Every surface shows
+	// the same view and model, laid out at its own size and scale. Run then
+	// returns only on cancellation or failure. It excludes Output, keyboard
+	// interactivity, OnSurface, OnResize and RunFrames.
+	AllOutputs    bool
 	Namespace     string // defaults to "nefergui"
 	Level         LayerLevel
 	Anchors       Anchor
@@ -67,6 +73,9 @@ type LayerConfig struct {
 
 // surfaceOptions lowers the config to platform options and validates it.
 func (c LayerConfig) surfaceOptions() (wayland.SurfaceOptions, error) {
+	if c.AllOutputs && (c.Output != "" || c.Keyboard != KeyboardNone) {
+		return wayland.SurfaceOptions{}, fmt.Errorf("nefergui: AllOutputs excludes Output and keyboard interactivity")
+	}
 	l := wayland.LayerOptions{Output: c.Output, Namespace: c.Namespace, ExclusiveZone: c.ExclusiveZone, Margin: c.Margin}
 	switch c.Level {
 	case LayerBackground:
