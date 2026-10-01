@@ -50,7 +50,7 @@ func TestClusterFallback(t *testing.T) {
 	for _, s := range cases {
 		t.Run(s, func(t *testing.T) {
 			r := []rune(s)
-			faces := clusterFaces(r, choices)
+			faces := clusterFaces(nil, r, choices)
 			if len(faces) != len(r) {
 				t.Fatalf("%d faces", len(faces))
 			}

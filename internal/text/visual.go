@@ -19,8 +19,8 @@ func fullBreak(text []rune) []int {
 // splitLevels prevents a single shaping run from crossing resolved paragraph
 // levels (not merely direction parity). The wrapper can subsequently split
 // further at UAX#14 break opportunities.
-func splitLevels(items []shaping.Input, levels []uint8) []shaping.Input {
-	var out []shaping.Input
+func splitLevels(out, items []shaping.Input, levels []uint8) []shaping.Input {
+	out = out[:0]
 	for _, item := range items {
 		if item.RunStart >= item.RunEnd {
 			continue
@@ -52,23 +52,29 @@ func directionFor(level uint8) di.Direction {
 type runItem struct {
 	output shaping.Output
 	level  uint8
-	pos    int
 }
 
-// visualRuns resets trailing whitespace to the paragraph level (L1) by
+// visualScratch holds order buffers reused across lines; the returned runs
+// are valid until the next call.
+type visualScratch struct {
+	breaks []int
+	runs   []runItem
+}
+
+// order resets trailing whitespace to the paragraph level (L1) by
 // resolving levels against the *actual wrapped line breaks*, then applies L2
 // to complete runs. The shaper already emits glyphs in visual order within an
 // odd-level run: never reverse its glyph slice a second time.
-func visualRuns(text []rune, line shaping.Line, base bidi.BaseDirection) (shaping.Line, map[int]uint8, error) {
+func (v *visualScratch) order(text []rune, line shaping.Line, base bidi.BaseDirection) ([]runItem, error) {
 	if len(line) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
 	start, end := line[0].Runes.Offset, line[len(line)-1].Runes.Offset+line[len(line)-1].Runes.Count
 	if start < 0 || end > len(text) || end <= start {
-		return nil, nil, fmt.Errorf("invalid line range %d:%d", start, end)
+		return nil, fmt.Errorf("invalid line range %d:%d", start, end)
 	}
 	// Include earlier lines so weak and neutral resolution use paragraph context.
-	breaks := []int{}
+	breaks := v.breaks[:0]
 	if start > 0 {
 		breaks = append(breaks, start)
 	}
@@ -76,28 +82,35 @@ func visualRuns(text []rune, line shaping.Line, base bidi.BaseDirection) (shapin
 	if end < len(text) {
 		breaks = append(breaks, len(text))
 	}
+	v.breaks = breaks
 	levels, _, err := bidi.Resolve(text, base, breaks)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// The wrapper's runs are in logical order. A level change within one output
 	// requires reshaping at that boundary; splitLevels does this before wrapping.
-	runs := make([]runItem, 0, len(line))
+	clear(v.runs) // drop glyph references from the previous line
+	runs := v.runs[:0]
 	for _, o := range line {
 		s, e := o.Runes.Offset, o.Runes.Offset+o.Runes.Count
 		if s < start || e > end || s >= e {
-			return nil, nil, fmt.Errorf("invalid shaped run %d:%d", s, e)
+			return nil, fmt.Errorf("invalid shaped run %d:%d", s, e)
+		}
+		if sameLevel(levels, s, e) {
+			runs = append(runs, runItem{output: o, level: levels[s]})
+			continue
 		}
 		// L1 may reset a trailing space in a shaped RTL run. Split the output at
 		// cluster boundaries, preserving its glyph metrics and HarfBuzz order.
 		parts, err := splitWrappedLevel(o, levels)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		for _, part := range parts {
-			runs = append(runs, runItem{output: part, level: levels[part.Runes.Offset], pos: part.Runes.Offset})
+			runs = append(runs, runItem{output: part, level: levels[part.Runes.Offset]})
 		}
 	}
+	v.runs = runs
 	// L2 on run levels: from maximum down to the minimum odd level, reverse
 	// contiguous sequences whose levels are >= the current level.
 	highest, lowestOdd := uint8(0), uint8(255)
@@ -127,13 +140,16 @@ func visualRuns(text []rune, line shaping.Line, base bidi.BaseDirection) (shapin
 			}
 		}
 	}
-	out := make(shaping.Line, 0, len(runs))
-	lookup := make(map[int]uint8, len(runs))
-	for _, run := range runs {
-		out = append(out, run.output)
-		lookup[run.pos] = run.level
+	return runs, nil
+}
+
+func sameLevel(levels []uint8, start, end int) bool {
+	for i := start + 1; i < end; i++ {
+		if levels[i] != levels[start] {
+			return false
+		}
 	}
-	return out, lookup, nil
+	return true
 }
 
 // splitWrappedLevel divides only at glyph cluster boundaries; UAX#14 wraps
@@ -143,14 +159,7 @@ func splitWrappedLevel(o shaping.Output, levels []uint8) ([]shaping.Output, erro
 	if start < 0 || end > len(levels) || start >= end {
 		return nil, fmt.Errorf("invalid output range")
 	}
-	same := true
-	for i := start + 1; i < end; i++ {
-		if levels[i] != levels[start] {
-			same = false
-			break
-		}
-	}
-	if same {
+	if sameLevel(levels, start, end) {
 		return []shaping.Output{o}, nil
 	}
 	// Group glyphs by lowest text cluster index, then restore HB visual order.

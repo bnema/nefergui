@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -282,6 +283,20 @@ type Catalog struct {
 	Faces       []*Face
 	source      IndexSource
 	Diagnostics []error
+	// ranked memoizes candidates per request; a face failure clears it,
+	// because failed faces are the only catalog state match depends on.
+	ranked []rankedFaces
+}
+
+// maxRanked bounds the candidates memo; distinct font requests per
+// application are few.
+const maxRanked = 64
+
+type rankedFaces struct {
+	families        []string
+	weight, stretch float32
+	italic          bool
+	faces           []*Face
 }
 
 func Load(source FontSource) (*Catalog, error) {
@@ -411,6 +426,11 @@ func (f *Face) ready() bool {
 }
 func (f *Face) fail(err error) {
 	f.bad = true
+	if f.catalog == nil {
+		return
+	}
+	clear(f.catalog.ranked)
+	f.catalog.ranked = f.catalog.ranked[:0]
 	f.catalog.Diagnostics = append(f.catalog.Diagnostics, fmt.Errorf("font %s face %d: %w", f.path, f.index, err))
 }
 
@@ -507,7 +527,22 @@ func normalizeFamilies(m map[string][]string) map[string][]string {
 	return out
 }
 
+// candidates ranks the faces a request may use. The result is shared: callers
+// must not modify it.
 func (c *Catalog) candidates(r Request) []*Face {
+	for _, e := range c.ranked {
+		if e.weight == r.Weight && e.stretch == r.Stretch && e.italic == r.Italic && slices.Equal(e.families, r.Families) {
+			return e.faces
+		}
+	}
+	out := c.rank(r)
+	if len(c.ranked) < maxRanked {
+		c.ranked = append(c.ranked, rankedFaces{families: slices.Clone(r.Families), weight: r.Weight, stretch: r.Stretch, italic: r.Italic, faces: out})
+	}
+	return out
+}
+
+func (c *Catalog) rank(r Request) []*Face {
 	seen := map[*Face]bool{}
 	var out []*Face
 	add := func(f *Face) {
