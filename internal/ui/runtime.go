@@ -237,13 +237,6 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	return true
 }
 
-// consumedInput reports whether the last committed build handled input events.
-func (r *runtime) consumedInput() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.consumed
-}
-
 // Wait blocks until input/redraw is available or the context is cancelled.
 func (r *runtime) Wait(ctx context.Context) error {
 	select {

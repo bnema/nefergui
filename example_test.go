@@ -40,19 +40,17 @@ func ExampleRenderer() {
 
 	m := &model{}
 	var out nefergui.Output
-	for {
-		drawn, err := r.Render(&out, m, view)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if drawn {
-			// Import out.Planes as a wl_buffer when out.NewBuffer is set, attach
-			// it with the Acquire/Release points, commit, and call r.Released
-			// when out.ReleaseFD becomes readable.
-			_ = out.Buffer
-		}
-		// Sleep until a Wayland event, <-r.Wake(), or a short timer when
-		// r.Pending() reports a frame waiting for the GPU.
-		return
+	// One iteration of the client loop; real clients repeat it forever.
+	drawn, err := r.Render(&out, m, view)
+	if err != nil {
+		log.Fatal(err)
 	}
+	if drawn {
+		// Import out.Planes as a wl_buffer when out.NewBuffer is set, attach
+		// it with the Acquire/Release points, commit, and call r.Released
+		// when out.ReleaseFD becomes readable.
+		_ = out.Buffer
+	}
+	// Then sleep until a Wayland event, <-r.Wake(), or a short timer when
+	// r.Pending() reports a frame waiting for the GPU.
 }

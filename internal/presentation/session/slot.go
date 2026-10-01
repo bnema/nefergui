@@ -26,8 +26,6 @@ type Slot struct {
 	Presented     bool // the caller has been told to import this buffer
 }
 
-func (slot *Slot) closeImage() { slot.Image.Close() }
-
 // beginReady does not change Pool ownership until the previous GPU submission
 // has completed. An unready available buffer is retried on a bounded wakeup.
 func beginReady(pool *buffers.Pool, slots map[uint64]*Slot, ready func(*Slot) (bool, error)) (*buffers.Buffer, *Slot, bool, error) {
