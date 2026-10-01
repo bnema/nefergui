@@ -1,6 +1,9 @@
 package bidi
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // BaseDirection selects the paragraph embedding level. Auto follows P2/P3.
 // nefergui: expose the existing upstream paragraph algorithm's resolved levels.
@@ -25,6 +28,12 @@ func Levels(text []rune, base BaseDirection, lineBreaks []int) ([]uint8, error) 
 // Resolve returns the paragraph base level and the resolved levels after L1.
 // nefergui: surface existing levels without copying or reclassifying UAX#9 classes.
 func Resolve(text []rune, base BaseDirection, lineBreaks []int) ([]uint8, uint8, error) {
+	return ResolveInto(nil, text, base, lineBreaks)
+}
+
+// ResolveInto is Resolve storing the levels in dst's backing array when it is
+// large enough, so left-to-right text does not allocate.
+func ResolveInto(dst []uint8, text []rune, base BaseDirection, lineBreaks []int) ([]uint8, uint8, error) {
 	if base > RTL {
 		return nil, 0, fmt.Errorf("invalid bidi base %d", base)
 	}
@@ -48,7 +57,9 @@ func Resolve(text []rune, base BaseDirection, lineBreaks []int) ([]uint8, uint8,
 		prev = end
 	}
 	if base != RTL && leftToRightOnly(text) {
-		return make([]uint8, len(text)), 0, nil
+		dst = slices.Grow(dst[:0], len(text))[:len(text)]
+		clear(dst)
+		return dst, 0, nil
 	}
 	return resolveFull(text, base, lineBreaks)
 }

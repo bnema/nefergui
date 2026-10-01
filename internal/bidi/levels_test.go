@@ -53,4 +53,12 @@ func TestAllocResolveLeftToRight(t *testing.T) {
 	if got := testing.AllocsPerRun(100, func() { _, _, _ = Resolve(text, Auto, breaks) }); got > 1 {
 		t.Fatalf("allocs = %v, want at most 1 (the result)", got)
 	}
+	dst := make([]uint8, 0, len(text))
+	if got := testing.AllocsPerRun(100, func() { dst, _, _ = ResolveInto(dst, text, Auto, breaks) }); got != 0 {
+		t.Fatalf("ResolveInto allocs = %v, want 0", got)
+	}
+	dst[0] = 7 // stale levels must be cleared on reuse
+	if levels, _, _ := ResolveInto(dst, text, Auto, breaks); levels[0] != 0 {
+		t.Fatalf("reused levels not cleared: %v", levels)
+	}
 }

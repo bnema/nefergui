@@ -61,15 +61,27 @@ type Engine struct {
 // measureScratch holds per-call buffers reused across measure calls. Nothing
 // in it may be referenced by a returned Layout.
 type measureScratch struct {
-	runes    []rune
-	faces    []*Face
-	reverse  map[*font.Face]*Face
-	faceFor  []*font.Face
-	items    []shaping.Input
-	levelled []shaping.Input
-	outs     []shaping.Output
-	runs     shaping.RunIterator
-	visual   visualScratch
+	runes     []rune
+	faces     []*Face
+	reverse   map[*font.Face]*Face
+	faceFor   []*font.Face
+	items     []shaping.Input
+	levelled  []shaping.Input
+	outs      []shaping.Output
+	runs      shaping.RunIterator
+	graphemes segmenter.Segmenter
+	levels    []uint8
+	breaks    [1]int
+	visual    visualScratch
+}
+
+// fullBreak is fullBreak backed by scratch storage.
+func (s *measureScratch) fullBreak(text []rune) []int {
+	if len(text) == 0 {
+		return nil
+	}
+	s.breaks[0] = len(text)
+	return s.breaks[:]
 }
 
 // iterate returns the reusable run iterator positioned at the start of outs.
@@ -91,9 +103,9 @@ func (m constantFace) ResolveFace(r rune) *font.Face { return m.face }
 // clusterFaces selects a single face for every UAX#29 extended grapheme. Format
 // characters (ZWJ and variation selectors) do not need outline coverage; they
 // remain in the cluster to let HarfBuzz apply substitutions.
-func clusterFaces(selected []*font.Face, text []rune, choices []*Face) []*font.Face {
+// seg is reused scratch storage.
+func clusterFaces(seg *segmenter.Segmenter, selected []*font.Face, text []rune, choices []*Face) []*font.Face {
 	selected = slices.Grow(selected[:0], len(text))[:len(text)]
-	var seg segmenter.Segmenter
 	seg.Init(text)
 	it := seg.GraphemeIterator()
 	for it.Next() {
@@ -264,7 +276,7 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 		sc.reverse[f.Shape] = f
 	}
 	sc.faces = faces
-	sc.faceFor = clusterFaces(sc.faceFor, text, faces)
+	sc.faceFor = clusterFaces(&sc.graphemes, sc.faceFor, text, faces)
 	input := shaping.Input{Text: text, RunEnd: len(text), Direction: direction, Size: fixed.Int26_6(math.Round(r.Size * 64))}
 	sc.items = splitFaces(sc.items, e.seg.Split(input, constantFace{face: faces[0].Shape}), sc.faceFor)
 	sc.levelled = splitLevels(sc.levelled, sc.items, levels)
@@ -324,10 +336,11 @@ func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 	if r.Direction > bidi.RTL {
 		return result, errors.New("invalid paragraph direction")
 	}
-	paraLevels, baseLevel, err := bidi.Resolve(text, r.Direction, fullBreak(text))
+	paraLevels, baseLevel, err := bidi.ResolveInto(e.scratch.levels, text, r.Direction, e.scratch.fullBreak(text))
 	if err != nil {
 		return result, err
 	}
+	e.scratch.levels = paraLevels
 	direction := di.DirectionLTR
 	if baseLevel%2 == 1 {
 		direction = di.DirectionRTL

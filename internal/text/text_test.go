@@ -452,7 +452,7 @@ func BenchmarkMeasureMissShort(b *testing.B) {
 // allocBaselineMeasureMiss is the measured allocation count of an uncached
 // short label; most of the remainder is inside go-text segmentation and
 // wrapping. Lower it with each optimization.
-const allocBaselineMeasureMiss = 24
+const allocBaselineMeasureMiss = 20
 
 func TestAllocMeasureMissShort(t *testing.T) {
 	if raceEnabled {

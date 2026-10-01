@@ -58,6 +58,7 @@ type runItem struct {
 // are valid until the next call.
 type visualScratch struct {
 	breaks []int
+	levels []uint8
 	runs   []runItem
 }
 
@@ -83,10 +84,11 @@ func (v *visualScratch) order(text []rune, line shaping.Line, base bidi.BaseDire
 		breaks = append(breaks, len(text))
 	}
 	v.breaks = breaks
-	levels, _, err := bidi.Resolve(text, base, breaks)
+	levels, _, err := bidi.ResolveInto(v.levels, text, base, breaks)
 	if err != nil {
 		return nil, err
 	}
+	v.levels = levels
 	// The wrapper's runs are in logical order. A level change within one output
 	// requires reshaping at that boundary; splitLevels does this before wrapping.
 	clear(v.runs) // drop glyph references from the previous line
