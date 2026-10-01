@@ -4,11 +4,10 @@ import (
 	"testing"
 
 	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/keyboard"
 )
 
 func typed(name, text string) platformInput {
-	return platformInput{Kind: "key", Key: keyboard.Key{Name: name, Text: text, Pressed: true}}
+	return platformInput{Kind: "key", Key: keyEvent{Name: name, Text: text, Pressed: true}}
 }
 
 // With text-input v3 the compositor routes keys to a grabbing input method;

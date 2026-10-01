@@ -8,7 +8,6 @@ import (
 
 	"github.com/bnema/nefergui/internal/css"
 	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/keyboard"
 	"github.com/bnema/nefergui/internal/layout"
 	"github.com/bnema/nefergui/internal/text"
 )
@@ -19,11 +18,18 @@ type platformInput struct {
 	Kind                 string // motion, press, release, axis, leave, key, focus-in, focus-out, resize
 	X, Y, DX, DY         float64
 	Width, Height, Scale float64
-	Key                  keyboard.Key
+	Key                  keyEvent
 	Button               uint32 // evdev button code (BTN_LEFT is primary)
 	Shift, Ctrl          bool
 	IME                  edit.IMEBatch
 	Time                 time.Time // optional event timestamp; zero uses receipt time
+}
+
+// keyEvent is the key part of a platformInput.
+type keyEvent struct {
+	Name, Text      string
+	Pressed, Repeat bool
+	Shift, Ctrl     bool
 }
 
 const pointerPrimary uint32 = 0x110 // Linux BTN_LEFT
