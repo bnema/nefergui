@@ -189,6 +189,9 @@ const allocBaselineRenderer = 244
 // changes on every frame and an unchanged structure. It runs on the real GPU
 // path because testify mocks would allocate.
 func TestAllocRendererSteadyFrame(t *testing.T) {
+	if raceEnabled {
+		t.Skip("race instrumentation changes allocation counts")
+	}
 	r, tg := gpuRenderer(t)
 	var out Output
 	n := 0
