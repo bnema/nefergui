@@ -62,11 +62,12 @@ func TestMeasureCacheHitsKeysAndEviction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if n := len(e.cache.free); n != 4 {
+		t.Fatalf("put did not take a recycled entry: free=%d, want 4", n)
+	}
+	// The hit verifies the entry's family list was replaced, not kept stale.
 	if hit, ok := e.cache.get("recycled", serif, 0); !ok || hit.Width != l.Width {
 		t.Fatalf("recycled entry missed: %+v %v", hit, ok)
-	}
-	if _, ok := e.cache.get("recycled", Request{Families: []string{"serif"}, Size: 16}, 0); ok {
-		t.Fatal("recycled entry kept a stale family list")
 	}
 }
 

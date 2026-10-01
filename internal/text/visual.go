@@ -9,13 +9,6 @@ import (
 	"github.com/go-text/typesetting/shaping"
 )
 
-func fullBreak(text []rune) []int {
-	if len(text) > 0 {
-		return []int{len(text)}
-	}
-	return nil
-}
-
 // splitLevels prevents a single shaping run from crossing resolved paragraph
 // levels (not merely direction parity). The wrapper can subsequently split
 // further at UAX#14 break opportunities.

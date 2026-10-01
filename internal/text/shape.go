@@ -70,12 +70,15 @@ type measureScratch struct {
 	outs      []shaping.Output
 	runs      shaping.RunIterator
 	graphemes segmenter.Segmenter
+	missing   []rune  // lazy coverage: runes no named face covers
+	choices   []*Face // lazy coverage: faces selected for this measure
 	levels    []uint8
 	breaks    [1]int
 	visual    visualScratch
 }
 
-// fullBreak is fullBreak backed by scratch storage.
+// fullBreak returns the single paragraph-end line break (nil for empty text),
+// backed by scratch storage.
 func (s *measureScratch) fullBreak(text []rune) []int {
 	if len(text) == 0 {
 		return nil
@@ -184,11 +187,12 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 	if e.catalog.source != nil {
 		// Load named faces only as required for coverage. A failing face is
 		// excluded permanently and ranking is recomputed to admit its runner-up.
+		// The scratch segmenter is free here: clusterFaces re-inits it later.
 		named := choices
-		var seg segmenter.Segmenter
+		seg := &e.scratch.graphemes
 		seg.Init(text)
 		it := seg.GraphemeIterator()
-		var missing []rune
+		missing := e.scratch.missing[:0]
 		for it.Next() {
 			cluster := it.Grapheme().Text
 			covered := false
@@ -215,16 +219,16 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 		}
 		// Rebuild after failed loads. The fallback window excludes named
 		// families by key, so it never depends on load or failure state.
+		e.scratch.missing = missing
 		named = e.catalog.candidates(r)
-		window := e.catalog.fallbackWindow(missing, r)
-		choices = nil
+		choices = e.scratch.choices[:0]
 		for _, f := range named {
 			if f.Shape != nil && !f.bad {
 				choices = append(choices, f)
 			}
 		}
 		if len(missing) != 0 {
-			for _, f := range window {
+			for _, f := range e.catalog.fallbackWindow(missing, r) {
 				if !f.ready() {
 					continue
 				}
@@ -257,6 +261,7 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 				choices = append(choices, f)
 			}
 		}
+		e.scratch.choices = choices
 	}
 	if len(choices) == 0 {
 		return nil, nil, errors.New("no usable fonts")

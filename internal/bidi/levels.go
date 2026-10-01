@@ -31,8 +31,9 @@ func Resolve(text []rune, base BaseDirection, lineBreaks []int) ([]uint8, uint8,
 	return ResolveInto(nil, text, base, lineBreaks)
 }
 
-// ResolveInto is Resolve storing the levels in dst's backing array when it is
-// large enough, so left-to-right text does not allocate.
+// ResolveInto is Resolve reusing dst's backing array for left-to-right-only
+// text, so it does not allocate. Text that needs the full UAX#9 algorithm
+// always gets a newly allocated slice; callers keep the returned slice.
 func ResolveInto(dst []uint8, text []rune, base BaseDirection, lineBreaks []int) ([]uint8, uint8, error) {
 	if base > RTL {
 		return nil, 0, fmt.Errorf("invalid bidi base %d", base)
