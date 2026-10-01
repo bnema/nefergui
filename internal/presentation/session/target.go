@@ -8,6 +8,8 @@ import (
 	"image"
 	"path/filepath"
 
+	"github.com/bnema/purego-vulkan/vulkan"
+
 	"github.com/bnema/nefergui/internal/layout"
 	"github.com/bnema/nefergui/internal/presentation/buffers"
 	"github.com/bnema/nefergui/internal/presentation/syncobj"
@@ -77,7 +79,11 @@ type Target struct {
 
 	list             render.ListBuffer
 	pipeline         *vkdevice.Pipeline
+	pipelineGen      uint64 // pool generation the current pipeline belongs to
 	retiredPipelines []retiredPipelines
+	genPending       bool  // Pool.Resize done, images of the new generation not yet built
+	waiting          bool  // the last Draw found work that only GPU progress unblocks
+	broken           error // sticky: a failure after Submit left the pipeline inconsistent
 	acquire          uint32
 	acquireFD        int
 	formats          []vkdevice.Format
@@ -131,51 +137,67 @@ func (t *Target) Resize(width, height int32) { t.wantW, t.wantH = width, height 
 // Size reports the physical size of the current image generation.
 func (t *Target) Size() (int32, int32) { return t.width, t.height }
 
-func (t *Target) newGeneration() error {
+// newGeneration builds the pipeline and every image of the current pool
+// generation into locals and commits them only when all succeeded, so a
+// failure leaves the previous size, pipeline and slots intact.
+func (t *Target) newGeneration() (err error) {
 	mods, err := t.Device.ExportableModifiers()
 	if err != nil {
 		return err
 	}
-	if t.selected, err = vkdevice.ChooseModifier(t.formats, t.transparent, mods); err != nil {
+	selected, err := vkdevice.ChooseModifier(t.formats, t.transparent, mods)
+	if err != nil {
 		return err
 	}
 	pipeline, err := t.Device.NewListPipeline(t.wantW, t.wantH)
 	if err != nil {
 		return err
 	}
-	if t.pipeline != nil {
-		t.retiredPipelines = append(t.retiredPipelines, retiredPipelines{generation: t.Pool.Generation - 1, list: t.pipeline})
-	}
-	t.pipeline = pipeline
-	t.width, t.height = t.wantW, t.wantH
+	fresh := make(map[uint64]*Slot)
+	defer func() {
+		if err != nil {
+			for _, slot := range fresh {
+				_ = t.closeSlot(slot)
+			}
+			pipeline.Close()
+		}
+	}()
 	for _, b := range t.Pool.Buffers {
 		if b.Generation != t.Pool.Generation {
 			continue
 		}
-		slot, err := t.newSlot(b)
+		slot, err := t.newSlot(b, t.wantW, t.wantH, selected)
 		if err != nil {
 			return err
 		}
-		t.Slots[b.ID] = slot
+		fresh[b.ID] = slot
+	}
+	if t.pipeline != nil {
+		t.retiredPipelines = append(t.retiredPipelines, retiredPipelines{generation: t.pipelineGen, list: t.pipeline})
+	}
+	t.pipeline, t.pipelineGen, t.selected = pipeline, t.Pool.Generation, selected
+	t.width, t.height = t.wantW, t.wantH
+	for id, slot := range fresh {
+		t.Slots[id] = slot
 	}
 	return nil
 }
 
-func (t *Target) newSlot(b *buffers.Buffer) (_ *Slot, err error) {
+func (t *Target) newSlot(b *buffers.Buffer, width, height int32, selected vkdevice.Modifier) (_ *Slot, err error) {
 	slot := &Slot{Buffer: b, First: true, ReleaseFD: -1, ReleaseExport: -1}
 	defer func() {
 		if err != nil {
-			t.closeSlot(slot)
+			_ = t.closeSlot(slot)
 		}
 	}()
-	if slot.Image, err = t.Device.AllocateImage(t.width, t.height, t.selected); err != nil {
+	if slot.Image, err = t.Device.AllocateImage(width, height, selected); err != nil {
 		return nil, err
 	}
 	if slot.Frame, err = t.Device.NewFrame(slot.Image); err != nil {
 		return nil, err
 	}
 	if t.capture {
-		if slot.Frame.Readback, err = t.Device.NewReadback(t.width, t.height); err != nil {
+		if slot.Frame.Readback, err = t.Device.NewReadback(width, height); err != nil {
 			return nil, err
 		}
 	}
@@ -192,7 +214,7 @@ func (t *Target) newSlot(b *buffers.Buffer) (_ *Slot, err error) {
 }
 
 // closeSlot frees a slot whose GPU work has completed (or never started).
-func (t *Target) closeSlot(slot *Slot) {
+func (t *Target) closeSlot(slot *Slot) error {
 	if slot.Frame != nil {
 		slot.Frame.Close()
 	}
@@ -205,10 +227,12 @@ func (t *Target) closeSlot(slot *Slot) {
 	if slot.Image != nil {
 		slot.Image.Close()
 	}
+	var err error
 	if slot.ReleaseHandle != 0 {
-		_ = t.Node.Destroy(slot.ReleaseHandle)
+		err = t.Node.Destroy(slot.ReleaseHandle)
 	}
 	closeFD(&slot.ReleaseExport)
+	return err
 }
 
 func closeFD(fd *int) {
@@ -219,8 +243,12 @@ func closeFD(fd *int) {
 }
 
 // Draw prepares and presents one frame. It returns false, touching no GPU
-// state, when no image is ready; the caller retries after Released.
+// state, when no image is ready; the caller retries after Released, or after a
+// short delay while Waiting reports GPU progress is needed.
 func (t *Target) Draw(display []layout.Command, scale float64, out *Output) (bool, error) {
+	if t.broken != nil {
+		return false, t.broken
+	}
 	if t.closed {
 		return false, errors.New("session: target closed")
 	}
@@ -231,35 +259,50 @@ func (t *Target) Draw(display []layout.Command, scale float64, out *Output) (boo
 		_ = unix.Close(r.ReleaseFD)
 	}
 	t.reported = t.reported[:0]
-	if t.width != t.wantW || t.height != t.wantH {
-		if t.width != 0 {
+	if t.genPending || t.width != t.wantW || t.height != t.wantH {
+		if !t.genPending && t.width != 0 {
 			if err := t.Pool.Resize(3); err != nil {
 				return false, err
 			}
 		}
+		t.genPending = true
 		if err := t.newGeneration(); err != nil {
 			return false, err
 		}
+		t.genPending = false
 	}
 	if err := t.retire(); err != nil {
 		return false, err
 	}
-	if _, err := t.finishPending(); err != nil {
+	pending, err := t.finishPending()
+	if err != nil {
 		return false, err
 	}
-	b, slot, _, err := beginReady(t.Pool, t.Slots, func(s *Slot) (bool, error) { return s.Frame.Ready() })
-	if err != nil || b == nil {
+	b, slot, waiting, err := beginReady(t.Pool, t.Slots, func(s *Slot) (bool, error) { return s.Frame.Ready() })
+	if err != nil {
 		return false, err
+	}
+	t.waiting = pending || waiting
+	if b == nil {
+		return false, nil
 	}
 	ok, err := t.submit(b, slot, display, scale, out)
-	if !ok || err != nil {
-		if b.State == buffers.Rendering {
-			b.State = buffers.Available // nothing was submitted
+	if err != nil {
+		// Before Submit nothing reached the GPU and the buffer is reusable.
+		if t.broken == nil && b.State == buffers.Rendering {
+			b.State = buffers.Available
 		}
 		return false, err
 	}
-	return true, nil
+	t.waiting = false
+	return ok, nil
 }
+
+// Waiting reports that the last Draw found a frame blocked only on GPU
+// progress (an image still being drawn, or a release wait not yet installed),
+// which no event announces: the caller should retry after a short delay. It is
+// false when every image is owned by the compositor; Released unblocks that.
+func (t *Target) Waiting() bool { return t.waiting }
 
 func (t *Target) submit(b *buffers.Buffer, slot *Slot, display []layout.Command, scale float64, out *Output) (bool, error) {
 	frame, err := t.Preparer.Prepare(display, scale, int(t.width), int(t.height))
@@ -290,33 +333,37 @@ func (t *Target) submit(b *buffers.Buffer, slot *Slot, display []layout.Command,
 	// From here the buffer is committed to the pipeline; failures are fatal.
 	fd, err := slot.Frame.Signal.Export()
 	if err != nil {
-		return false, fatal(err)
+		return false, t.fail(err)
 	}
 	acquire, err := t.Pool.Acquire(b)
 	if err != nil {
 		_ = unix.Close(fd)
-		return false, fatal(err)
+		return false, t.fail(err)
 	}
 	if err = t.Node.AcquirePoint(fd, t.acquire, acquire); err != nil {
 		_ = unix.Close(fd)
-		return false, fatal(err)
+		return false, t.fail(err)
 	}
 	release, err := t.Pool.Commit(b)
 	if err != nil {
-		return false, fatal(err)
+		return false, t.fail(err)
 	}
 	if err = t.Node.EventFD(slot.ReleaseHandle, release, slot.ReleaseFD); err != nil {
-		return false, fatal(err)
+		return false, t.fail(err)
 	}
 	if err = t.Pool.Own(b); err != nil {
-		return false, fatal(err)
+		return false, t.fail(err)
 	}
 	t.fill(out, slot, acquire, release)
 	return true, nil
 }
 
-// fatal marks an error after which the buffer cannot be returned to Available.
-func fatal(err error) error { return fmt.Errorf("session: presentation pipeline broken: %w", err) }
+// fail records an error after Submit: the buffer cannot go back to Available
+// and every later Draw returns this error.
+func (t *Target) fail(err error) error {
+	t.broken = fmt.Errorf("session: presentation pipeline broken: %w", err)
+	return t.broken
+}
 
 func (t *Target) fill(out *Output, slot *Slot, acquire, release uint64) {
 	b := slot.Buffer
@@ -342,7 +389,12 @@ func (t *Target) fill(out *Output, slot *Slot, acquire, release uint64) {
 func (t *Target) Released(id uint64) error {
 	slot := t.Slots[id]
 	if slot == nil {
-		return nil
+		return nil // retired: its descriptors are gone
+	}
+	// Drain first: a notification that lands after the drain is seen by the
+	// Signaled check below or leaves the eventfd readable for a later no-op call.
+	if err := drainEventFD(slot.ReleaseFD); err != nil {
+		return err
 	}
 	b := slot.Buffer
 	if b.State != buffers.CompositorOwned {
@@ -353,13 +405,18 @@ func (t *Target) Released(id uint64) error {
 		return err
 	}
 	if !signaled {
-		return nil // still armed; spurious call
-	}
-	var counter [8]byte
-	if _, err = unix.Read(slot.ReleaseFD, counter[:]); err != nil && err != unix.EAGAIN {
-		return fmt.Errorf("session: read release eventfd: %w", err)
+		return nil // stale notification; the registration for the live point is still armed
 	}
 	return t.release(slot, b.ReleasePoint)
+}
+
+// drainEventFD resets a non-blocking eventfd; an empty one is fine.
+func drainEventFD(fd int) error {
+	var counter [8]byte
+	if _, err := unix.Read(fd, counter[:]); err != nil && err != unix.EAGAIN {
+		return fmt.Errorf("session: read release eventfd: %w", err)
+	}
+	return nil
 }
 
 func (t *Target) release(slot *Slot, point uint64) error {
@@ -406,7 +463,8 @@ func (t *Target) release(slot *Slot, point uint64) error {
 func (t *Target) finishPending() (bool, error) {
 	pending := false
 	for _, slot := range t.Slots {
-		if slot.PendingWait == nil {
+		// Old generations never return to Available; retire frees them.
+		if slot.PendingWait == nil || slot.Buffer.Generation != t.Pool.Generation {
 			continue
 		}
 		ready, err := slot.Frame.Ready()
@@ -446,14 +504,17 @@ func (t *Target) retire() error {
 		eventFD := slot.ReleaseFD
 		slot.ReleaseFD = -1
 		wasPresented := slot.Presented
-		t.closeSlot(slot)
+		err = t.closeSlot(slot)
 		if wasPresented {
 			t.pending = append(t.pending, Retired{Buffer: id, ReleaseFD: eventFD})
 		} else if eventFD >= 0 {
 			_ = unix.Close(eventFD)
 		}
 		delete(t.Slots, id)
-		if err = t.Pool.Remove(b); err != nil {
+		if rerr := t.Pool.Remove(b); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -470,7 +531,6 @@ func (t *Target) retire() error {
 			i++
 			continue
 		}
-		old.rect.Close()
 		old.list.Close()
 		t.retiredPipelines = append(t.retiredPipelines[:i], t.retiredPipelines[i+1:]...)
 	}
@@ -495,15 +555,17 @@ func (t *Target) Readback(id uint64) (*image.NRGBA, error) {
 	return img, nil
 }
 
-// Close waits for the GPU, then frees every descriptor and image. The
-// compositor's imports keep their own kernel references.
+// Close waits for the GPU, then frees every descriptor and image, always
+// completing the teardown. The compositor's imports keep their own kernel
+// references. It returns the joined errors of the steps that failed.
 func (t *Target) Close() error {
 	if t == nil || t.closed {
 		return nil
 	}
 	t.closed = true
+	var errs []error
 	if t.Device != nil && t.Device.Logical != 0 && t.Device.Dispatch != nil {
-		_ = t.Device.Dispatch.DeviceWaitIdle(t.Device.Logical)
+		errs = append(errs, vulkan.Check(t.Device.Dispatch.DeviceWaitIdle(t.Device.Logical)))
 	}
 	for _, r := range t.reported {
 		_ = unix.Close(r.ReleaseFD)
@@ -514,11 +576,10 @@ func (t *Target) Close() error {
 	t.reported, t.pending = nil, nil
 	for id, slot := range t.Slots {
 		closeFD(&slot.ReleaseFD)
-		t.closeSlot(slot)
+		errs = append(errs, t.closeSlot(slot))
 		delete(t.Slots, id)
 	}
 	for _, old := range t.retiredPipelines {
-		old.rect.Close()
 		old.list.Close()
 	}
 	t.retiredPipelines = nil
@@ -526,10 +587,10 @@ func (t *Target) Close() error {
 	closeFD(&t.acquireFD)
 	if t.Node != nil {
 		if t.acquire != 0 {
-			_ = t.Node.Destroy(t.acquire)
+			errs = append(errs, t.Node.Destroy(t.acquire))
 		}
-		_ = t.Node.Close()
+		errs = append(errs, t.Node.Close())
 	}
 	t.Device.Close()
-	return nil
+	return errors.Join(errs...)
 }
