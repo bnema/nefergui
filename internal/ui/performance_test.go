@@ -65,7 +65,7 @@ func demoRuntime(tb testing.TB) *runtime {
 		tb.Fatal(err)
 	}
 	r := newRuntime()
-	stylesheet, err := os.ReadFile("../../examples/demo/app.css")
+	stylesheet, err := os.ReadFile("testdata/demo.css")
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func BenchmarkDemoFrame(b *testing.B) {
 	}
 }
 
-func TestDemoFrameAllocationBudget(t *testing.T) {
+func TestAllocDemoFrame(t *testing.T) {
 	r := demoRuntime(t)
 	if !r.Build(demoFrame) {
 		t.Fatal("initial build failed")
