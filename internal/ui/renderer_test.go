@@ -15,7 +15,6 @@ import (
 type testModel struct {
 	clicks int
 	rects  []Rect
-	inline string
 }
 
 func testView(f *Frame, m *testModel) {
