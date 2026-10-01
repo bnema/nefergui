@@ -169,7 +169,8 @@ func Run(ctx context.Context, o Options) (res Result, code int) {
 		}
 		res.Artifacts[key] = path
 	}
-	res.Artifacts["frame"] = filepath.Join(out, "frames", "latest.png")
+	shots := FramesDir(filepath.Join(out, "frames"), o.Size) // first output's screenshots
+	res.Artifacts["frame"] = filepath.Join(shots, "latest.png")
 	res.Artifacts["compositor_log"] = filepath.Join(out, "logs", "compositor.log")
 	res.Artifacts["client_stdout"] = filepath.Join(out, "logs", "client.stdout")
 	res.Artifacts["client_stderr"] = filepath.Join(out, "logs", "client.stderr")
@@ -330,7 +331,7 @@ func Run(ctx context.Context, o Options) (res Result, code int) {
 					}
 				}
 				if requestSeen {
-					err = copyNextFrame(res.Artifacts["frames"], requestedAt, capturePath)
+					err = copyNextFrame(shots, requestedAt, capturePath)
 					if err == nil {
 						res.Artifacts["capture"] = capturePath
 						requestSeen = false
@@ -366,7 +367,7 @@ func Run(ctx context.Context, o Options) (res Result, code int) {
 			}
 			if requestSeen && err == nil {
 				for runCtx.Err() == nil {
-					err = copyNextFrame(res.Artifacts["frames"], requestedAt, capturePath)
+					err = copyNextFrame(shots, requestedAt, capturePath)
 					if err == nil {
 						res.Artifacts["capture"] = capturePath
 						break

@@ -29,6 +29,11 @@ func requireCompositor(t *testing.T) {
 
 func runHeadless(t *testing.T, scenario, script string, timeout time.Duration) []string {
 	t.Helper()
+	return runHeadlessSize(t, "640x480", scenario, script, timeout)
+}
+
+func runHeadlessSize(t *testing.T, size, scenario, script string, timeout time.Duration) []string {
+	t.Helper()
 	requireCompositor(t)
 	dir := t.TempDir()
 	events := filepath.Join(dir, "events.txt")
@@ -42,7 +47,7 @@ func runHeadless(t *testing.T, scenario, script string, timeout time.Duration) [
 	t.Setenv(headlessClientEnv, scenario)
 	t.Setenv("NEFERGUI_UI_HEADLESS_OUT", events)
 	res, code := harness.Run(context.Background(), harness.Options{
-		Size: "640x480", Scale: "1", Layout: "us", Background: "#000000",
+		Size: size, Scale: "1", Layout: "us", Background: "#000000",
 		Input: input, Out: filepath.Join(dir, "out"), AllowUnpinned: true,
 		Timeout: timeout, ReadyTimeout: 5 * time.Second,
 		Client: []string{os.Args[0], "-test.run=^TestHeadlessClientProcess$", "-test.count=1"},
@@ -88,6 +93,25 @@ func TestHeadlessLayerHooks(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in:\n%s", want, joined)
 		}
+	}
+}
+
+// Every output gets a surface laid out at its own size; the wake redraws them all.
+func TestHeadlessLayerAllOutputs(t *testing.T) {
+	lines := runHeadlessSize(t, "640x480,320x200", "all-outputs", "", 30*time.Second)
+	joined := "\n" + strings.Join(lines, "\n") + "\n"
+	w := indexOf(lines, "wake-sent")
+	if w < 0 {
+		t.Fatalf("no wake:\n%s", joined)
+	}
+	after := "\n" + strings.Join(lines[w:], "\n") + "\n"
+	for _, want := range []string{"\nview size 640x480\n", "\nview size 320x200\n"} {
+		if !strings.Contains(after, want) {
+			t.Errorf("missing %q after the wake in:\n%s", strings.TrimSpace(want), joined)
+		}
+	}
+	if !strings.Contains(joined, "\nexit context deadline exceeded\n") {
+		t.Errorf("Run must end only with its context:\n%s", joined)
 	}
 }
 
@@ -160,6 +184,13 @@ func TestHeadlessClientProcess(t *testing.T) {
 				return false
 			}),
 		)
+	case "all-outputs":
+		ctx, cancel = context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		wake := make(chan struct{}, 1)
+		go func() { time.Sleep(2 * time.Second); logf("wake-sent"); wake <- struct{}{} }()
+		options = append(options, Wake(wake), Layer(LayerConfig{AllOutputs: true, Level: LayerOverlay,
+			Anchors: AnchorTop | AnchorBottom | AnchorLeft | AnchorRight, ExclusiveZone: -1, InputRects: []Rect{}}))
 	case "hook-error":
 		options = append(options, Layer(LayerConfig{Level: LayerOverlay}),
 			OnSurface(func(context.Context, WaylandSurface) error { return errors.New("hook failed") }))
