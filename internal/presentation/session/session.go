@@ -24,6 +24,7 @@ import (
 	"github.com/bnema/nefergui/internal/presentation/vkdevice"
 	"github.com/bnema/nefergui/internal/render"
 	"github.com/bnema/nefergui/internal/text"
+	"github.com/bnema/wlturbo/protocol/core"
 	"github.com/bnema/wlturbo/protocol/drmsyncobj"
 	"golang.org/x/sys/unix"
 )
@@ -40,6 +41,13 @@ type Slot struct {
 	ReadbackPending bool
 	ReleaseHandle   uint32
 	ReleaseTimeline *drmsyncobj.WpLinuxDrmSyncobjTimeline
+	// WlBuffer is the compositor-side wl_buffer of the Wayland-owning Session.
+	WlBuffer *core.Buffer
+
+	// Used only by Target, the Wayland-free core. Descriptors are -1 when unset.
+	ReleaseFD     int  // eventfd armed on each commit's release point
+	ReleaseExport int  // exported syncobj fd of the release timeline
+	Presented     bool // the caller has been told to import this buffer
 }
 type Session struct {
 	Window           *wayland.Window
@@ -259,7 +267,13 @@ func (s *Session) newGeneration() error {
 	if err != nil {
 		return err
 	}
-	selected, err := vkdevice.ChooseModifier(s.Window.Tranches, s.Transparent, mods)
+	var formats []vkdevice.Format
+	for _, tranche := range s.Window.Tranches {
+		for _, entry := range tranche {
+			formats = append(formats, vkdevice.Format{FourCC: entry.Format, Modifier: entry.Modifier})
+		}
+	}
+	selected, err := vkdevice.ChooseModifier(formats, s.Transparent, mods)
 	if err != nil {
 		return err
 	}
@@ -286,7 +300,7 @@ func (s *Session) newGeneration() error {
 		if b.Generation != s.Pool.Generation {
 			continue
 		}
-		img, e := s.Device.AllocateImage(width, height, selected, s.Window.Dmabuf)
+		img, e := s.Device.AllocateImage(width, height, selected)
 		if e != nil {
 			return e
 		}
@@ -302,23 +316,58 @@ func (s *Session) newGeneration() error {
 			return e
 		}
 		slot := &Slot{Buffer: b, Image: img, Frame: frame, First: true}
-		slot.ReleaseHandle, e = s.Node.Create()
-		if e != nil {
+		if slot.WlBuffer, e = s.importBuffer(img, width, height, selected.DRMFormat); e != nil {
 			frame.Close()
 			img.Close()
+			return e
+		}
+		slot.ReleaseHandle, e = s.Node.Create()
+		if e != nil {
+			slot.closeImage()
+			frame.Close()
 			return e
 		}
 		slot.ReleaseTimeline, e = s.importTimeline(slot.ReleaseHandle)
 		if e != nil {
 			_ = s.Node.Destroy(slot.ReleaseHandle)
+			slot.closeImage()
 			frame.Close()
-			img.Close()
 			return e
 		}
 		s.Slots[b.ID] = slot
-		img.Buffer.OnRelease(func() { s.Window.BufferReleased(b.ID) })
+		slot.WlBuffer.OnRelease(func() { s.Window.BufferReleased(b.ID) })
 	}
 	return nil
+}
+
+// importBuffer wraps the image's DMA-BUF in a wl_buffer. The image keeps its
+// own descriptor; a duplicate goes to the compositor.
+func (s *Session) importBuffer(img *vkdevice.Image, width, height int32, format uint32) (*core.Buffer, error) {
+	fd, err := unix.FcntlInt(uintptr(img.FD), unix.F_DUPFD_CLOEXEC, 3)
+	if err != nil {
+		return nil, fmt.Errorf("duplicate DMA-BUF fd: %w", err)
+	}
+	params, err := s.Window.Dmabuf.CreateParams()
+	if err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
+	defer params.Destroy()
+	// WLTurbo consumes fd only when its complete Add request succeeds.
+	if err = params.Add(fd, 0, img.Offset, img.Stride, uint32(img.Modifier>>32), uint32(img.Modifier)); err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
+	return params.CreateImmed(width, height, format, 0)
+}
+
+// closeImage destroys the wl_buffer, then frees the GPU image.
+func (slot *Slot) closeImage() {
+	if slot.WlBuffer != nil {
+		_ = slot.WlBuffer.Destroy()
+		slot.WlBuffer = nil
+	}
+	slot.Image.Close()
 }
 
 // beginReady does not change Pool ownership until the previous GPU submission
@@ -455,7 +504,7 @@ func (s *Session) tick(rect *vkdevice.Rect, instances []vkdevice.Instance, uploa
 	if err != nil {
 		return false, err
 	}
-	if err = s.Window.Present(slot.Image.Buffer, s.AcquireTimeline, slot.ReleaseTimeline, acquire, release); err != nil {
+	if err = s.Window.Present(slot.WlBuffer, s.AcquireTimeline, slot.ReleaseTimeline, acquire, release); err != nil {
 		return false, err
 	}
 	s.traceState(b, "committed")
@@ -670,7 +719,7 @@ func (s *Session) retire() error {
 		if slot.Wait != nil {
 			slot.Wait.Close()
 		}
-		slot.Image.Close()
+		slot.closeImage()
 		_ = slot.ReleaseTimeline.Destroy()
 		_ = s.Node.Destroy(slot.ReleaseHandle)
 		s.traceState(b, "retired")
@@ -898,7 +947,7 @@ stopWaiters:
 		}
 		// The exported DMA-BUF remains alive in the compositor independently.
 		if slot.Image != nil {
-			slot.Image.Close()
+			slot.closeImage()
 		}
 		if s.Node != nil && slot.ReleaseHandle != 0 {
 			_ = s.Node.Destroy(slot.ReleaseHandle)

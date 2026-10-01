@@ -8,28 +8,28 @@ import (
 	"unsafe"
 
 	"github.com/bnema/purego-vulkan/vulkan"
-	"github.com/bnema/wlturbo/protocol/core"
-	"github.com/bnema/wlturbo/protocol/linuxdmabuf"
 	"golang.org/x/sys/unix"
 )
 
-// Image owns a Vulkan image, dedicated exportable memory and its Wayland buffer.
-// Close must only be called after both wl_buffer.release and the compositor's
-// release timeline point, or for an image never attached to a surface.
+// Image owns a Vulkan image, dedicated exportable memory and the exported
+// DMA-BUF file descriptor. FD stays owned by the Image and is closed by Close;
+// a transport that consumes descriptors must be handed a dup. The compositor's
+// import keeps its own kernel reference, so Close may run while the compositor
+// still holds the buffer, but the GPU must be done with the image first.
 type Image struct {
 	Image          vulkan.Image
 	Memory         vulkan.DeviceMemory
-	Buffer         *core.Buffer
+	FD             int // exported DMA-BUF, -1 when none
 	Modifier       uint64
 	Offset, Stride uint32
 	device         *Device
 }
 
-func (d *Device) AllocateImage(width, height int32, selected Modifier, dmabuf *linuxdmabuf.LinuxDmabuf) (img *Image, err error) {
-	if width <= 0 || height <= 0 || dmabuf == nil {
-		return nil, fmt.Errorf("invalid DMA-BUF image dimensions or manager")
+func (d *Device) AllocateImage(width, height int32, selected Modifier) (img *Image, err error) {
+	if width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("invalid DMA-BUF image dimensions")
 	}
-	img = &Image{device: d}
+	img = &Image{device: d, FD: -1}
 	defer func() {
 		if err != nil {
 			img.Close()
@@ -88,27 +88,7 @@ func (d *Device) AllocateImage(width, height int32, selected Modifier, dmabuf *l
 	if err = vulkan.Check(d.Dispatch.GetMemoryFdKHR(d.Logical, &fdInfo, &fd)); err != nil {
 		return nil, fmt.Errorf("export DMA-BUF: %w", err)
 	}
-	// WLTurbo consumes fd only when its complete Add request succeeds. On a
-	// failed send Vulkan still owns the image and we still own the exported FD.
-	owned := true
-	defer func() {
-		if owned {
-			_ = unix.Close(int(fd))
-		}
-	}()
-	params, e := dmabuf.CreateParams()
-	if e != nil {
-		return nil, e
-	}
-	defer params.Destroy()
-	if err = params.Add(int(fd), 0, img.Offset, img.Stride, uint32(img.Modifier>>32), uint32(img.Modifier)); err != nil {
-		return nil, err
-	}
-	owned = false
-	img.Buffer, err = params.CreateImmed(width, height, selected.DRMFormat, 0)
-	if err != nil {
-		return nil, err
-	}
+	img.FD = int(fd)
 	return img, nil
 }
 
@@ -116,9 +96,9 @@ func (img *Image) Close() {
 	if img == nil || img.device == nil {
 		return
 	}
-	if img.Buffer != nil {
-		_ = img.Buffer.Destroy()
-		img.Buffer = nil
+	if img.FD >= 0 {
+		_ = unix.Close(img.FD)
+		img.FD = -1
 	}
 	if img.Image != 0 {
 		img.device.Dispatch.DestroyImage(img.device.Logical, img.Image, nil)
