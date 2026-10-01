@@ -112,7 +112,7 @@ func TestPaintCountsMatch(t *testing.T) {
 		&Node{ID: "outline", Kind: Box, Style: &css.Style{Display: css.KeywordBlock, Width: px(20), Height: px(20), OutlineStyle: css.KeywordSolid, OutlineWidth: px(2)}},
 		&Node{ID: "radius", Kind: Box, Style: &css.Style{Display: css.KeywordBlock, Width: px(20), Height: px(20), BorderRadius: css.Radii{TopLeft: px(2)}}},
 	)
-	ctx := context{options: opts}
+	ctx := newContext(opts)
 	tree, err := ctx.place(root, 0, 0, opts.Width, opts.Height, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -129,21 +129,57 @@ func TestPaintCountsMatch(t *testing.T) {
 			shadows++
 		}
 	}
-	if n.commands != len(out) || cap(out) != len(out) || n.runs != runs || n.glyphs != glyphs || n.shadows != shadows {
+	if n.commands != len(out) || n.runs != runs || n.glyphs != glyphs || n.shadows != shadows {
 		t.Fatalf("counts %+v vs commands=%d cap=%d runs=%d glyphs=%d shadows=%d", n, len(out), cap(out), runs, glyphs, shadows)
 	}
 }
 
 func TestPaintAllocations(t *testing.T) {
 	root, opts := paintFixture(t, 50)
-	ctx := context{options: opts}
+	ctx := newContext(opts)
 	tree, err := ctx.place(root, 0, 0, opts.Width, opts.Height, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// One block each for commands, shadows, runs and glyphs, whatever the tree size.
-	if n := testing.AllocsPerRun(20, func() { ctx.display(root, tree) }); n > 4 {
-		t.Fatalf("paint allocs=%v, want <= 4", n)
+	// The arena's blocks are reused, so a repeated paint allocates nothing.
+	if n := testing.AllocsPerRun(20, func() { ctx.display(root, tree) }); n != 0 {
+		t.Fatalf("paint allocs=%v, want 0", n)
+	}
+}
+
+// TestLayoutArenaReuse checks that a steady layout into a reused arena
+// allocates nothing, and that alternating two arenas keeps the previous
+// Output intact while the next one is built.
+func TestLayoutArenaReuse(t *testing.T) {
+	root, opts := paintFixture(t, 20)
+	var arenas [2]Arena
+	layout := func(i int) Output {
+		o := opts
+		o.Arena = &arenas[i]
+		out, err := Layout(root, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	prev := layout(0)
+	layout(1)
+	wantID, wantX := prev.Tree.Children[3].ID, prev.Display[5].Rect.X
+	root.Children[3].ID = "changed"
+	layout(1)
+	if prev.Tree.Children[3].ID != wantID || prev.Display[5].Rect.X != wantX {
+		t.Fatal("building into one arena changed the Output of the other")
+	}
+	if n := testing.AllocsPerRun(20, func() { layout(1) }); n != 0 {
+		t.Fatalf("steady layout allocs=%v, want 0", n)
+	}
+	// Growth falls back to individual allocations once, then fits.
+	for range 30 {
+		root.Children = append(root.Children, root.Children[0])
+	}
+	layout(1)
+	if n := testing.AllocsPerRun(20, func() { layout(1) }); n != 0 {
+		t.Fatalf("allocs after growth=%v, want 0", n)
 	}
 }
 

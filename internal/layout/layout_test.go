@@ -75,6 +75,14 @@ func TestFlex(t *testing.T) {
 		t.Fatalf("flex wrap: %+v", out.Tree.Children)
 	}
 	snapshot(t, "flex", out)
+	arena := new(Arena)
+	opts := Options{Width: 120, Height: 50, Arena: arena}
+	if _, err := Layout(root, opts); err != nil {
+		t.Fatal(err)
+	}
+	if n := testing.AllocsPerRun(20, func() { _, _ = Layout(root, opts) }); n != 0 {
+		t.Fatalf("steady flex wrap layout allocs=%v, want 0", n)
+	}
 	s.FlexWrap = css.KeywordNowrap
 	root.Style = &s
 	out, err = Layout(root, Options{Width: 120, Height: 50})

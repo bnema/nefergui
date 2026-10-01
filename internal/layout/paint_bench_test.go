@@ -37,7 +37,7 @@ func paintFixture(tb testing.TB, cards int) (*Node, Options) {
 // BenchmarkPaint measures only context.paint on an already placed tree.
 func BenchmarkPaint(b *testing.B) {
 	root, opts := paintFixture(b, 100)
-	ctx := context{options: opts}
+	ctx := newContext(opts)
 	tree, err := ctx.place(root, 0, 0, opts.Width, opts.Height, nil, nil, 0)
 	if err != nil {
 		b.Fatal(err)
@@ -53,6 +53,7 @@ func BenchmarkPaint(b *testing.B) {
 
 func BenchmarkLayoutPaintTree(b *testing.B) {
 	root, opts := paintFixture(b, 100)
+	opts.Arena = new(Arena) // as the runtime does: storage is reused per frame
 	if _, err := Layout(root, opts); err != nil {
 		b.Fatal(err)
 	}

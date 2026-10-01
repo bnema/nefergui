@@ -36,6 +36,8 @@ type runtime struct {
 	committedArena        int
 	styles                *css.Engine
 	output                layout.Output
+	layouts               [2]layout.Arena // one holds output, the other builds the next
+	outputArena           int
 	state                 interactionState
 	width, height, scale  float64
 	textEngine            *text.Engine
@@ -149,7 +151,11 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	if f.root != nil {
 		f.refresh(f.root)
 		input := r.layoutTree(f.root)
-		out, err := layout.Layout(input, layout.Options{Width: r.width, Height: r.height, TextEngine: r.textEngine})
+		// Lay out in the arena that does not hold r.output, which the view and
+		// scrollCaret still read as the committed layout.
+		nextLayout := 1 - r.outputArena
+		opts := layout.Options{Width: r.width, Height: r.height, TextEngine: r.textEngine, Arena: &r.layouts[nextLayout]}
+		out, err := layout.Layout(input, opts)
 		if err != nil {
 			r.mu.Unlock()
 			r.Redraw()
@@ -157,9 +163,10 @@ func (r *runtime) Build(view func(*Frame)) bool {
 		}
 		// Re-layout at most once after moving a focused caret into its editor
 		// viewport; the offset is per frame identity and bounded by measured extent.
+		// Reusing the arena is safe: out is not read after scrollCaret returns.
 		if r.scrollCaret(f.root, &out) {
 			input = r.layoutTree(f.root)
-			out, err = layout.Layout(input, layout.Options{Width: r.width, Height: r.height, TextEngine: r.textEngine})
+			out, err = layout.Layout(input, opts)
 			if err != nil {
 				r.mu.Unlock()
 				r.Redraw()
@@ -168,7 +175,7 @@ func (r *runtime) Build(view func(*Frame)) bool {
 		}
 		r.paintEditors(f.root, &out)
 		r.paintIndicators(f.root, &out)
-		r.output = out
+		r.output, r.outputArena = out, nextLayout
 	}
 	r.committed, r.committedArena = f.root, next
 	// Events mutate the model while the view runs, so elements declared before

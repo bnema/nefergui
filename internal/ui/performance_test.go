@@ -103,7 +103,7 @@ func TestAllocDemoFrame(t *testing.T) {
 			panic("demo frame failed")
 		}
 	})
-	const budget = 1100
+	const budget = 600
 	if allocs > budget {
 		t.Fatalf("demo frame allocations: %.0f > %d", allocs, budget)
 	}

@@ -99,6 +99,65 @@ func TestWake(t *testing.T) {
 	}
 }
 
+// TestCommittedLayoutSurvivesNextBuild guards the layout arena rotation: the
+// view reads the committed layout while the next one is built, and a frame
+// that does not commit must leave it intact.
+func TestCommittedLayoutSurvivesNextBuild(t *testing.T) {
+	r := newRuntime()
+	view := func(label string) func(*Frame) {
+		return func(f *Frame) { f.Root().Box(Key(label), Inline("width:10px;height:10px;background:#fff")) }
+	}
+	if !r.Build(view("a")) {
+		t.Fatal("first build skipped")
+	}
+	snapshot := func() (string, int) {
+		leaf := r.output.Tree
+		for len(leaf.Children) > 0 {
+			leaf = leaf.Children[0]
+		}
+		return leaf.ID, len(r.output.Display)
+	}
+	id, cmds := snapshot()
+	// Building the next frame must not write into the previous output, which
+	// the view, hit-testing and the renderer read until the commit.
+	prevTree, prevDisplay := r.output.Tree, r.output.Display
+	first := prevDisplay[0].ID
+	r.Redraw()
+	r.Build(view("b"))
+	leaf := prevTree
+	for len(leaf.Children) > 0 {
+		leaf = leaf.Children[0]
+	}
+	if leaf.ID != id || len(prevDisplay) != cmds || prevDisplay[0].ID != first {
+		t.Fatalf("next build overwrote the previous layout: leaf %q (want %q), %d commands (want %d), first %q (want %q)", leaf.ID, id, len(prevDisplay), cmds, prevDisplay[0].ID, first)
+	}
+	idB, _ := snapshot()
+	if idB == id {
+		t.Fatalf("second build not committed: %q", idB)
+	}
+	// A panicking view does not commit: the output stays readable and intact.
+	func() {
+		defer func() { _ = recover() }()
+		r.Redraw()
+		r.Build(func(f *Frame) { view("c")(f); panic("view failure") })
+	}()
+	if got, _ := snapshot(); got != idB {
+		t.Fatalf("panicked frame replaced the output: %q, want %q", got, idB)
+	}
+	// Rotation still alternates after the failure: two more builds keep the
+	// latest output and never hand out the arena it lives in.
+	for _, label := range []string{"d", "e"} {
+		before, _ := snapshot()
+		r.Redraw()
+		r.Build(func(f *Frame) {
+			if got, _ := snapshot(); got != before {
+				t.Errorf("output overwritten before commit: %q, want %q", got, before)
+			}
+			view(label)(f)
+		})
+	}
+}
+
 func TestConcurrentBuildDefersCommit(t *testing.T) {
 	r := newRuntime()
 	entered := make(chan struct{})
