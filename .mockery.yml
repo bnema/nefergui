@@ -1,0 +1,16 @@
+all: false
+formatter: goimports
+force-file-write: true
+structname: '{{.Mock}}{{.InterfaceName}}'
+template: testify
+template-schema: '{{.Template}}.schema.json'
+require-template-schema-exists: true
+packages:
+  # Unexported GPU seam of Renderer: the mock lives next to the code, in a test file.
+  github.com/bnema/nefergui/internal/ui:
+    config:
+      dir: internal/ui
+      pkgname: ui
+      filename: '{{.InterfaceName}}_mock_test.go'
+    interfaces:
+      target:

@@ -12,29 +12,6 @@ import (
 	"github.com/bnema/nefergui/internal/platform/wayland"
 )
 
-// InputKind classifies an InputEvent.
-type InputKind uint8
-
-const (
-	InputPointerMotion InputKind = iota + 1
-	InputPointerPress
-	InputPointerRelease
-	InputPointerAxis
-	InputPointerLeave
-	InputKey
-	InputFocusIn
-	InputFocusOut
-	InputReset // platform dropped queued input; treat held state as released
-)
-
-// Modifiers is a bit set of keyboard modifiers held during a key event.
-type Modifiers uint8
-
-const (
-	ModShift Modifiers = 1 << iota
-	ModCtrl
-)
-
 // InputEvent is a raw platform event, delivered on the owner loop before the
 // normal control routing. Coordinates are logical, surface-local pixels.
 // Size changes are not input; use OnResize and Frame.Size. Which fields are set

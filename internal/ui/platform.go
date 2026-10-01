@@ -28,5 +28,5 @@ func (r *runtime) routeInput(in wayland.Input) {
 	if in.Kind == "axis" && in.DX == 0 && in.DY == 0 {
 		return
 	}
-	r.route(platformInput{Kind: in.Kind, X: in.X, Y: in.Y, DX: in.DX, DY: in.DY, Button: in.Button, Key: in.Key, Shift: in.Key.Shift, Ctrl: in.Key.Ctrl})
+	r.route(platformInput{Kind: in.Kind, X: in.X, Y: in.Y, DX: in.DX, DY: in.DY, Button: in.Button, Key: keyEvent{Name: in.Key.Name, Text: in.Key.Text, Pressed: in.Key.Pressed, Repeat: in.Key.Repeat, Shift: in.Key.Shift, Ctrl: in.Key.Ctrl}, Shift: in.Key.Shift, Ctrl: in.Key.Ctrl})
 }

@@ -3,7 +3,6 @@ package ui
 import (
 	"github.com/bnema/nefergui/internal/css"
 	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/keyboard"
 	"testing"
 )
 
@@ -85,7 +84,7 @@ func TestDisabledEditorRejectsFocusAndText(t *testing.T) {
 	if r.state.focus != nil {
 		t.Fatalf("disabled input focused: %s", idKey(r.state.focus))
 	}
-	r.route(platformInput{Kind: "key", Key: keyboard.Key{Name: "q", Text: "x", Pressed: true}})
+	r.route(platformInput{Kind: "key", Key: keyEvent{Name: "q", Text: "x", Pressed: true}})
 	r.Build(view)
 	if value != "keep" {
 		t.Fatalf("disabled input edited: %q", value)
@@ -101,7 +100,7 @@ func TestEditFocusIMEAndClipboard(t *testing.T) {
 	r.clipboard = &clip{data: []byte("paste")}
 	r.route(key("Tab"))
 	r.Build(view)
-	r.route(platformInput{Kind: "key", Key: keyboard.Key{Name: "q", Text: "x", Pressed: true}})
+	r.route(platformInput{Kind: "key", Key: keyEvent{Name: "q", Text: "x", Pressed: true}})
 	r.Build(view)
 	if value != "x" || r.committed.children[0].text != "•" {
 		t.Fatalf("value=%q display=%q focus=%s", value, r.committed.children[0].text, idKey(r.state.focus))

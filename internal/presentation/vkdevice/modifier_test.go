@@ -3,14 +3,13 @@
 package vkdevice
 
 import (
-	"github.com/bnema/wlturbo/protocol/linuxdmabuf"
 	"golang.org/x/sys/unix"
 	"os"
 	"testing"
 )
 
 func TestModifierIntersection(t *testing.T) {
-	tranches := [][]linuxdmabuf.FormatEntry{{{Format: XRGB8888, Modifier: 11}, {Format: ARGB8888, Modifier: 22}}, {{Format: XRGB8888, Modifier: 33}, {Format: ARGB8888, Modifier: 44}}}
+	tranches := []Format{{XRGB8888, 11}, {ARGB8888, 22}, {XRGB8888, 33}, {ARGB8888, 44}}
 	for _, tc := range []struct {
 		alpha     bool
 		available map[uint64]bool
