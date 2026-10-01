@@ -220,9 +220,10 @@ func Layout(root *Node, options Options) (Output, error) {
 func (c context) display(root *Node, tree *Result) []Command {
 	n := countCommands(root, tree)
 	a := c.arena
-	clear(a.commands[:cap(a.commands)]) // callers may have appended in place
 	if cap(a.commands) > max(n.commands, maxSlabKeep) {
 		a.commands = nil // do not pin one huge frame's list
+	} else {
+		clear(a.commands[:cap(a.commands)]) // callers may have appended in place
 	}
 	a.shadows.reset(n.shadows)
 	a.runs.reset(n.runs)

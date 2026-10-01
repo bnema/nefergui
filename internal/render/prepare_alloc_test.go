@@ -153,6 +153,22 @@ func TestPrepareIntoReusesQuads(t *testing.T) {
 	}); allocs != 0 {
 		t.Fatalf("PrepareInto allocs=%v, want 0", allocs)
 	}
+	// Mostly culled: the reservation stays large while few quads are visible.
+	culled := rectCommands(400)
+	if allocs := testing.AllocsPerRun(20, func() {
+		f, err := p.PrepareInto(quads, culled, 1, 100, 10)
+		if err != nil || len(f.Quads) > 10 {
+			t.Fatalf("culled frame: %v %d", err, len(f.Quads))
+		}
+		quads = f.Quads
+	}); allocs != 0 {
+		t.Fatalf("culled PrepareInto allocs=%v, want 0", allocs)
+	}
+	// A much smaller frame drops the past peak buffer.
+	f, err := p.PrepareInto(quads, rectCommands(2), 1, 100, 10)
+	if err != nil || cap(f.Quads) >= cap(quads) {
+		t.Fatalf("peak buffer kept: %v cap %d, was %d", err, cap(f.Quads), cap(quads))
+	}
 }
 
 func BenchmarkPrepareBoxes(b *testing.B) {

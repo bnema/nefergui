@@ -312,9 +312,6 @@ func (t *Target) submit(b *buffers.Buffer, slot *Slot, display []layout.Command,
 		return false, err
 	}
 	t.quads = frame.Quads
-	if cap(t.quads) > 4*len(t.quads)+64 {
-		t.quads = nil // do not pin a past peak frame's buffer
-	}
 	defer t.list.Release()
 	instances, batches, stats := t.list.List(frame)
 	if len(stats.Skipped) != 0 {
