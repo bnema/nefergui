@@ -75,11 +75,11 @@ type measureScratch struct {
 
 // iterate returns the reusable run iterator positioned at the start of outs.
 func (s *measureScratch) iterate(outs []shaping.Output) shaping.RunIterator {
-	if s.runs == nil {
-		s.runs = shaping.NewSliceIterator(outs)
+	if r, ok := s.runs.(interface{ Reset([]shaping.Output) }); ok {
+		r.Reset(outs)
 		return s.runs
 	}
-	s.runs.(interface{ Reset([]shaping.Output) }).Reset(outs)
+	s.runs = shaping.NewSliceIterator(outs)
 	return s.runs
 }
 

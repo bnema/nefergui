@@ -536,6 +536,7 @@ func (c *Catalog) candidates(r Request) []*Face {
 		}
 	}
 	out := c.rank(r)
+	out = out[:len(out):len(out)] // an append by a caller cannot write into the memo
 	if len(c.ranked) < maxRanked {
 		c.ranked = append(c.ranked, rankedFaces{families: slices.Clone(r.Families), weight: r.Weight, stretch: r.Stretch, italic: r.Italic, faces: out})
 	}

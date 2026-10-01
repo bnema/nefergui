@@ -21,12 +21,16 @@ func TestLeftToRightOnlyMatchesFullAlgorithm(t *testing.T) {
 	}
 	check := func(text []rune) {
 		t.Helper()
+		breaks := []int{len(text)}
+		if len(text) > 1 {
+			breaks = []int{1, len(text)} // L1 on a line end inside the paragraph
+		}
 		for _, base := range []BaseDirection{Auto, LTR} {
-			fast, fastBase, err := Resolve(text, base, []int{len(text)})
+			fast, fastBase, err := Resolve(text, base, breaks)
 			if err != nil {
 				t.Fatal(err)
 			}
-			full, fullBase, err := resolveFull(text, base, []int{len(text)})
+			full, fullBase, err := resolveFull(text, base, breaks)
 			if err != nil {
 				t.Fatal(err)
 			}
