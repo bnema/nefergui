@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"github.com/bnema/nefergui/internal/edit"
+	"strconv"
 	"strings"
 )
 
@@ -230,4 +231,35 @@ func (n Node) Heading(text string, options ...HeadingOption) {
 			o.heading(child.element)
 		}
 	}
+}
+
+// TextInt shows prefix followed by v in decimal without fmt boxing. It builds
+// the text in a stack buffer, so the only allocation is the final string.
+func (n Node) TextInt(prefix string, v int64, options ...ContainerOption) {
+	child := n.child("text", "", options)
+	if !child.valid() {
+		return
+	}
+	var stack [64]byte
+	buf := append(stack[:0], prefix...)
+	buf = strconv.AppendInt(buf, v, 10)
+	child.element.text = string(buf)
+}
+
+// maskBullets backs Masked for common counts without allocating.
+var maskBullets = strings.Repeat("•", 256)
+
+// Masked shows count bullet glyphs and stores no value, for a secret held
+// outside the view (a password field fed from an external buffer). A negative
+// count shows nothing.
+func (n Node) Masked(count int, options ...ContainerOption) {
+	child := n.child("text", "", options)
+	if !child.valid() || count <= 0 {
+		return
+	}
+	if count <= 256 {
+		child.element.text = maskBullets[:count*len("•")]
+		return
+	}
+	child.element.text = strings.Repeat("•", count)
 }
