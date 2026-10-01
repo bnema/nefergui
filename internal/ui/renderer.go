@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 
 	"github.com/bnema/nefergui/internal/css"
 	"github.com/bnema/nefergui/internal/edit"
@@ -112,6 +113,11 @@ type Renderer struct {
 	scale  float64
 	pw, ph int32
 	closed bool
+
+	// Last input region handed out, to report only changes.
+	region     []Rect
+	regionNil  bool
+	haveRegion bool
 }
 
 // asyncClipboard lets an AsyncClipboard satisfy the editor's Clipboard port;
@@ -281,18 +287,25 @@ func (r *Renderer) export(out *Output) {
 		Damage: damage, Cursor: cursorOf(r.rt.cursor()), InputRects: rects[:0],
 	}
 	rt := r.rt
-	if rt.inputStaged {
-		out.InputRectsChanged = true
-		if rt.inputNil {
-			out.InputRects = nil
-		} else {
-			if out.InputRects == nil {
-				out.InputRects = []Rect{}
-			}
-			out.InputRects = append(out.InputRects, rt.inputRects...)
-		}
-		rt.inputStaged = false
+	if !rt.inputStaged {
+		return
 	}
+	rt.inputStaged = false
+	// A region equal to the last reported one costs nothing.
+	if r.haveRegion && r.regionNil == rt.inputNil && slices.Equal(r.region, rt.inputRects) {
+		return
+	}
+	r.haveRegion, r.regionNil = true, rt.inputNil
+	r.region = append(r.region[:0], rt.inputRects...)
+	out.InputRectsChanged = true
+	if rt.inputNil {
+		out.InputRects = nil
+		return
+	}
+	if out.InputRects == nil {
+		out.InputRects = []Rect{}
+	}
+	out.InputRects = append(out.InputRects, rt.inputRects...)
 }
 
 func cursorOf(k css.Keyword) Cursor {
