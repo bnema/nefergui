@@ -4,18 +4,17 @@ import (
 	"testing"
 
 	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/keyboard"
 )
 
 func typed(name, text string) platformInput {
-	return platformInput{Kind: "key", Key: keyboard.Key{Name: name, Text: text, Pressed: true}}
+	return platformInput{Kind: "key", Key: keyEvent{Name: name, Text: text, Pressed: true}}
 }
 
 // With text-input v3 the compositor routes keys to a grabbing input method;
 // keys that still arrive on wl_keyboard were not consumed and must be typed.
 func TestKeyboardTextInsertedWhileIMEEnabled(t *testing.T) {
 	r := newRuntime()
-	ime := &orderedIME{}
+	ime, calls := newOrderedIME(t)
 	r.ime = ime
 	value := "ab"
 	view := func(f *Frame) { f.Root().Textarea("message", &value) }
@@ -29,7 +28,7 @@ func TestKeyboardTextInsertedWhileIMEEnabled(t *testing.T) {
 		r.route(k)
 		r.Build(view)
 	}
-	if value != "abca\n\n" || len(ime.calls) == 0 {
+	if value != "abca\n\n" || len(*calls) == 0 {
 		t.Fatalf("keyboard text lost while IME enabled: %q", value)
 	}
 

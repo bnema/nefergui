@@ -22,6 +22,7 @@ func TestUAPILayouts(t *testing.T) {
 		{"transfer", unsafe.Sizeof(transferArg{}), 32},
 		{"wait", unsafe.Sizeof(timelineWaitArg{}), 48},
 		{"query", unsafe.Sizeof(queryArg{}), 24},
+		{"eventfd", unsafe.Sizeof(eventFDArg{}), 24},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s size: got %d want %d", tc.name, tc.got, tc.want)
@@ -100,5 +101,82 @@ func TestFailedImportRetainsFD(t *testing.T) {
 	}
 	if _, err = unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
 		t.Fatalf("lost caller FD after failed import: %v", err)
+	}
+}
+
+// DRM_IOWR(type 'd', nr, size): direction 3<<30, size<<16, type<<8, nr.
+func TestEventFDRequestNumber(t *testing.T) {
+	want := uintptr(3<<30 | unsafe.Sizeof(eventFDArg{})<<16 | 'd'<<8 | 0xCF)
+	if ioctlEventFD != want {
+		t.Fatalf("DRM_IOCTL_SYNCOBJ_EVENTFD: got %#x want %#x", ioctlEventFD, want)
+	}
+	want = uintptr(3<<30 | unsafe.Sizeof(queryArg{})<<16 | 'd'<<8 | 0xCD)
+	if ioctlTimelineSig != want {
+		t.Fatalf("DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL: got %#x want %#x", ioctlTimelineSig, want)
+	}
+}
+
+func TestEventFDBadFDFailsWithErrno(t *testing.T) {
+	n := &Node{fd: -1}
+	if err := n.EventFD(1, 1, 0); !errors.Is(err, unix.EBADF) {
+		t.Fatalf("want EBADF, got %v", err)
+	}
+}
+
+// A point signaled from the CPU makes the registered eventfd readable without
+// any waiter thread; the registration is one-shot.
+func TestEventFDSignaledPointHardware(t *testing.T) {
+	path := os.Getenv("NEFERGUI_RENDER_NODE")
+	if path == "" {
+		t.Skip("opt in with NEFERGUI_RENDER_NODE=/dev/dri/renderD...")
+	}
+	n, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+	handle, err := n.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Destroy(handle)
+	efd, err := unix.Eventfd(0, unix.EFD_CLOEXEC|unix.EFD_NONBLOCK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(efd)
+	if err = n.EventFD(handle, 7, efd); err != nil {
+		t.Fatalf("EventFD: %v", err)
+	}
+	readable := func(timeout int) bool {
+		fds := []unix.PollFd{{Fd: int32(efd), Events: unix.POLLIN}}
+		r, err := unix.Poll(fds, timeout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r > 0
+	}
+	if readable(0) {
+		t.Fatal("eventfd readable before the point signaled")
+	}
+	if err = n.Signal(handle, 7); err != nil {
+		t.Fatalf("Signal: %v", err)
+	}
+	if !readable(1000) {
+		t.Fatal("eventfd not readable after the point signaled")
+	}
+	var buf [8]byte
+	if _, err = unix.Read(efd, buf[:]); err != nil {
+		t.Fatal(err)
+	}
+	if readable(0) {
+		t.Fatal("eventfd still readable after read")
+	}
+	// Re-arming for an already signaled point fires immediately.
+	if err = n.EventFD(handle, 7, efd); err != nil {
+		t.Fatal(err)
+	}
+	if !readable(1000) {
+		t.Fatal("re-armed eventfd for a signaled point stayed silent")
 	}
 }

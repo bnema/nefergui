@@ -7,7 +7,6 @@ import (
 	"unsafe"
 
 	"github.com/bnema/purego-vulkan/vulkan"
-	"github.com/bnema/wlturbo/protocol/linuxdmabuf"
 )
 
 // Modifier is the one-plane GPU/compositor common image layout chosen in
@@ -22,16 +21,22 @@ const (
 	ARGB8888 uint32 = 0x34325241
 )
 
-func ChooseModifier(tranches [][]linuxdmabuf.FormatEntry, transparent bool, supported map[uint64]bool) (Modifier, error) {
+// Format is one DRM format and modifier pair the compositor accepts.
+type Format struct {
+	FourCC   uint32
+	Modifier uint64
+}
+
+// ChooseModifier picks the first format in the compositor's preference order
+// whose modifier the GPU can also export.
+func ChooseModifier(formats []Format, transparent bool, supported map[uint64]bool) (Modifier, error) {
 	format := XRGB8888
 	if transparent {
 		format = ARGB8888
 	}
-	for _, tranche := range tranches {
-		for _, entry := range tranche {
-			if entry.Format == format && supported[entry.Modifier] {
-				return Modifier{format, entry.Modifier}, nil
-			}
+	for _, f := range formats {
+		if f.FourCC == format && supported[f.Modifier] {
+			return Modifier{format, f.Modifier}, nil
 		}
 	}
 	return Modifier{}, fmt.Errorf("no one-plane exportable B8G8R8A8 modifier shared with compositor for DRM format %#x", format)

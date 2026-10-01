@@ -6,13 +6,11 @@ import (
 	"testing"
 
 	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/keyboard"
-	"github.com/bnema/nefergui/internal/platform/wayland"
 	"github.com/bnema/nefergui/internal/text"
 )
 
 func key(name string) platformInput {
-	return platformInput{Kind: "key", Key: keyboard.Key{Name: name, Pressed: true}}
+	return platformInput{Kind: "key", Key: keyEvent{Name: name, Pressed: true}}
 }
 func shell(r *runtime, activated *int) func(*Frame) {
 	return func(f *Frame) {
@@ -67,7 +65,7 @@ func TestShellStyleAndFocus(t *testing.T) {
 	if !r.state.focus.same(r.Target(3)) {
 		t.Fatal("disabled included in tab order")
 	}
-	r.route(platformInput{Kind: "key", Shift: true, Key: keyboard.Key{Name: "Tab", Pressed: true}})
+	r.route(platformInput{Kind: "key", Shift: true, Key: keyEvent{Name: "Tab", Pressed: true}})
 	r.Build(view)
 	if !r.state.focus.same(r.Target(1)) {
 		t.Fatal("reverse tab")
@@ -257,13 +255,13 @@ func TestCursorFollowsHoverAndCapture(t *testing.T) {
 	}
 	for _, c := range []struct {
 		y    float64
-		want uint32
-	}{{2, wayland.CursorPointer}, {22, wayland.CursorText}, {42, wayland.CursorNotAllowed}, {62, wayland.CursorDefault}} {
-		if got := cursorShape(at("motion", c.y)); got != c.want {
+		want Cursor
+	}{{2, CursorPointer}, {22, CursorText}, {42, CursorNotAllowed}, {62, CursorDefault}} {
+		if got := cursorOf(at("motion", c.y)); got != c.want {
 			t.Errorf("y=%v shape %v, want %v", c.y, got, c.want)
 		}
 	}
-	if cursorShape(css.KeywordAuto) != cursorShape(css.KeywordDefault) {
+	if cursorOf(css.KeywordAuto) != cursorOf(css.KeywordDefault) {
 		t.Error("auto must map to the default shape")
 	}
 	// Press on the input, drag over the button: the input keeps its cursor.
@@ -361,7 +359,7 @@ func TestKeyboardActivationLifecycle(t *testing.T) {
 	if count != 1 || r.state.space == nil || r.state.flags(r.committed.children[0])&css.Active == 0 {
 		t.Fatal("space press should only set active")
 	}
-	r.route(platformInput{Kind: "key", Key: keyboard.Key{Name: "space"}})
+	r.route(platformInput{Kind: "key", Key: keyEvent{Name: "space"}})
 	r.Build(view)
 	if count != 2 || r.state.space != nil {
 		t.Fatal("space release should activate once", count)
@@ -369,7 +367,7 @@ func TestKeyboardActivationLifecycle(t *testing.T) {
 	r.route(space)
 	r.route(key("Escape"))
 	r.Build(view)
-	r.route(platformInput{Kind: "key", Key: keyboard.Key{Name: "space"}})
+	r.route(platformInput{Kind: "key", Key: keyEvent{Name: "space"}})
 	if r.Build(view) {
 		t.Fatal("cancelled release redrew")
 	}
@@ -379,7 +377,7 @@ func TestKeyboardActivationLifecycle(t *testing.T) {
 	r.route(space)
 	r.route(platformInput{Kind: "focus-out"})
 	r.Build(view)
-	r.route(platformInput{Kind: "key", Key: keyboard.Key{Name: "space"}})
+	r.route(platformInput{Kind: "key", Key: keyEvent{Name: "space"}})
 	if r.Build(view) || count != 2 {
 		t.Fatal("focus loss failed to cancel")
 	}
@@ -388,7 +386,7 @@ func TestKeyboardActivationLifecycle(t *testing.T) {
 	r.route(space)
 	r.route(key("Tab"))
 	r.Build(view)
-	r.route(platformInput{Kind: "key", Key: keyboard.Key{Name: "space"}})
+	r.route(platformInput{Kind: "key", Key: keyEvent{Name: "space"}})
 	if r.Build(view) || count != 2 {
 		t.Fatal("focus change failed to cancel")
 	}

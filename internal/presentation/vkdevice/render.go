@@ -76,17 +76,13 @@ func (f *Frame) Ready() (bool, error) {
 	return true, nil
 }
 
-func (f *Frame) Record(img *Image, pipe *Pipeline, width, height int32, rect Rect, initial bool, capture bool) error {
-	return f.record(img, pipe, width, height, initial, capture, nil, nil, nil, &rect)
-}
-
 // RecordList records an ordered list of physical-pixel quads. Reuse is gated
 // by Ready, including any instance-buffer growth.
 func (f *Frame) RecordList(img *Image, pipe *Pipeline, width, height int32, instances []Instance, uploads []text.Upload, batches []Batch, initial, capture bool) error {
-	return f.record(img, pipe, width, height, initial, capture, instances, uploads, batches, nil)
+	return f.record(img, pipe, width, height, initial, capture, instances, uploads, batches)
 }
 
-func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial, capture bool, instances []Instance, uploads []text.Upload, batches []Batch, rect *Rect) (err error) {
+func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial, capture bool, instances []Instance, uploads []text.Upload, batches []Batch) (err error) {
 	if width <= 0 || height <= 0 || pipe == nil {
 		return fmt.Errorf("invalid render dimensions or pipeline")
 	}
@@ -109,15 +105,13 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 		}
 		f.submitted = false
 	}
-	if rect == nil && f.device.atlas == nil {
+	if f.device.atlas == nil {
 		return fmt.Errorf("list atlas not initialized")
 	}
-	if rect == nil {
-		if err := f.stageGlyphs(uploads); err != nil {
-			return err
-		}
+	if err := f.stageGlyphs(uploads); err != nil {
+		return err
 	}
-	if rect == nil && f.device.images != nil {
+	if f.device.images != nil {
 		defer func() {
 			if err != nil {
 				f.device.images.abort(f)
@@ -128,7 +122,7 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 			return err
 		}
 	}
-	if rect == nil && len(instances) > 0 {
+	if len(instances) > 0 {
 		if err := f.uploadInstances(instances); err != nil {
 			return err
 		}
@@ -138,12 +132,10 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 	if err = vulkan.Check(d.BeginCommandBuffer(f.Commands, &begin)); err != nil {
 		return err
 	}
-	f.atlasRecorded = rect == nil && !f.device.atlas.initialized
-	if rect == nil {
-		var staging vulkan.Buffer
-		if len(uploads) != 0 {
-			staging = f.glyphStaging.Buffer
-		}
+	f.atlasRecorded = !f.device.atlas.initialized
+	var staging vulkan.Buffer
+	if len(uploads) != 0 {
+		staging = f.glyphStaging.Buffer
 		f.device.atlas.recordUploads(f.Commands, staging, uploads)
 		if !f.device.images.fallbackReady {
 			f.recordFallback()
@@ -164,32 +156,27 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 	rendering := vulkan.RenderingInfo{SType: vulkan.StructureTypeRenderingInfo, RenderArea: area, LayerCount: 1, ColorAttachmentCount: 1, ColorAttachments: &attachment}
 	d.CmdBeginRendering(f.Commands, &rendering)
 	d.CmdBindPipeline(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Handle)
-	if rect != nil {
-		d.CmdPushConstants(f.Commands, pipe.Layout, vulkan.ShaderStageVertexBit|vulkan.ShaderStageFragmentBit, 0, uint32(unsafe.Sizeof(*rect)), unsafe.Pointer(rect))
-		d.CmdDraw(f.Commands, 6, 1, 0, 0)
-	} else {
-		// The fragment shader statically references both descriptor sets even
-		// for non-image draws. Bind a valid initialized image set before any
-		// draw; each image batch then replaces set 1 in painter's order.
-		sets := [2]vulkan.DescriptorSet{f.device.atlas.Set, f.device.images.fallback.Texture.Set}
-		d.CmdBindDescriptorSets(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Layout, 0, 2, &sets[0], 0, nil)
-		screen := [2]float32{float32(width), float32(height)}
-		d.CmdPushConstants(f.Commands, pipe.Layout, vulkan.ShaderStageVertexBit|vulkan.ShaderStageFragmentBit, 0, 8, unsafe.Pointer(&screen))
-		if len(instances) > 0 {
-			offset := vulkan.DeviceSize(0)
-			d.CmdBindVertexBuffers(f.Commands, 0, 1, &f.instances.Buffer, &offset)
-			for _, batch := range batches {
-				if batch.Count == 0 || uint64(batch.First)+uint64(batch.Count) > uint64(len(instances)) {
-					return fmt.Errorf("invalid list batch range")
-				}
-				if batch.Source != nil {
-					if batch.Texture == nil {
-						return fmt.Errorf("image batch has no GPU texture")
-					}
-					d.CmdBindDescriptorSets(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Layout, 1, 1, &batch.Texture.Set, 0, nil)
-				}
-				d.CmdDraw(f.Commands, 6, batch.Count, 0, batch.First)
+	// The fragment shader statically references both descriptor sets even
+	// for non-image draws. Bind a valid initialized image set before any
+	// draw; each image batch then replaces set 1 in painter's order.
+	sets := [2]vulkan.DescriptorSet{f.device.atlas.Set, f.device.images.fallback.Texture.Set}
+	d.CmdBindDescriptorSets(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Layout, 0, 2, &sets[0], 0, nil)
+	screen := [2]float32{float32(width), float32(height)}
+	d.CmdPushConstants(f.Commands, pipe.Layout, vulkan.ShaderStageVertexBit|vulkan.ShaderStageFragmentBit, 0, 8, unsafe.Pointer(&screen))
+	if len(instances) > 0 {
+		offset := vulkan.DeviceSize(0)
+		d.CmdBindVertexBuffers(f.Commands, 0, 1, &f.instances.Buffer, &offset)
+		for _, batch := range batches {
+			if batch.Count == 0 || uint64(batch.First)+uint64(batch.Count) > uint64(len(instances)) {
+				return fmt.Errorf("invalid list batch range")
 			}
+			if batch.Source != nil {
+				if batch.Texture == nil {
+					return fmt.Errorf("image batch has no GPU texture")
+				}
+				d.CmdBindDescriptorSets(f.Commands, vulkan.PipelineBindPointGraphics, pipe.Layout, 1, 1, &batch.Texture.Set, 0, nil)
+			}
+			d.CmdDraw(f.Commands, 6, batch.Count, 0, batch.First)
 		}
 	}
 	d.CmdEndRendering(f.Commands)

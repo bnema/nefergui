@@ -41,6 +41,15 @@ type queryArg struct {
 	Count, Flags    uint32
 }
 
+// eventFDArg is struct drm_syncobj_eventfd: the kernel signals fd once the
+// timeline point is signaled (flags 0) without any thread waiting on it.
+type eventFDArg struct {
+	Handle, Flags uint32
+	Point         uint64
+	FD            int32
+	Pad           uint32
+}
+
 const (
 	ioctlCreate       = uintptr(0xc00864bf)
 	ioctlDestroy      = uintptr(0xc00864c0)
@@ -49,6 +58,8 @@ const (
 	ioctlTimelineWait = uintptr(0xc03064ca)
 	ioctlQuery        = uintptr(0xc01864cb)
 	ioctlTransfer     = uintptr(0xc02064cc)
+	ioctlTimelineSig  = uintptr(0xc01864cd)
+	ioctlEventFD      = uintptr(0xc01864cf)
 	importSyncFile    = 1
 	exportSyncFile    = 1
 )
@@ -107,15 +118,38 @@ func (n *Node) Destroy(handle uint32) error {
 	return n.ioctl(ioctlDestroy, unsafe.Pointer(&destroyArg{Handle: handle}))
 }
 
-// ExportTimeline returns a new owned syncobj FD (not a sync_file). The caller
-// hands it to WLTurbo's ImportTimeline, which closes only after a successful
-// request send; on send failure the caller must close the FD.
+// ExportTimeline returns a new owned syncobj FD (not a sync_file). The
+// caller owns it and closes it, or passes a duplicate to its Wayland client.
 func (n *Node) ExportTimeline(handle uint32) (int, error) {
 	a := handleArg{Handle: handle, FD: -1}
 	if err := n.ioctl(ioctlHandleToFD, unsafe.Pointer(&a)); err != nil {
 		return -1, err
 	}
 	return int(a.FD), nil
+}
+
+// EventFD arms efd, an eventfd owned by the caller, to become readable when
+// point of the timeline behind handle is signaled. The point need not be
+// submitted yet. The registration is one-shot: re-arm after every use. The
+// call returns at once and never waits.
+func (n *Node) EventFD(handle uint32, point uint64, efd int) error {
+	a := eventFDArg{Handle: handle, Point: point, FD: int32(efd)}
+	return n.ioctl(ioctlEventFD, unsafe.Pointer(&a))
+}
+
+// Signal signals one timeline point from the CPU (DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL).
+// The compositor does this through its release timeline; clients use it only
+// to simulate that in tests.
+func (n *Node) Signal(handle uint32, point uint64) error {
+	h, p := handle, point
+	a := queryArg{Handles: uint64(uintptr(unsafe.Pointer(&h))), Points: uint64(uintptr(unsafe.Pointer(&p))), Count: 1}
+	errno := n.ioctlErrno(ioctlTimelineSig, unsafe.Pointer(&a))
+	runtime.KeepAlive(h)
+	runtime.KeepAlive(p)
+	if errno != 0 {
+		return ioctlError(ioctlTimelineSig, errno)
+	}
+	return nil
 }
 
 // ImportFence consumes syncFile only after FD_TO_HANDLE imports it into a
@@ -175,7 +209,7 @@ func (n *Node) ReleaseFence(timeline uint32, point uint64) (int, error) {
 }
 
 // WaitPoint waits for a submitted release point for at most timeout. Call it
-// only from a waiter goroutine, never from the presentation loop. WAIT_FOR_SUBMIT
+// only off the render path: it can block for up to timeout. WAIT_FOR_SUBMIT
 // handles the interval before the compositor attaches its fence to the point.
 func (n *Node) WaitPoint(handle uint32, point uint64, timeout time.Duration) (bool, error) {
 	if timeout < 0 || timeout > time.Second {
