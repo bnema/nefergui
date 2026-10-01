@@ -8,11 +8,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-type memoryClipboard struct{ data []byte }
-
-func (m *memoryClipboard) ReadText(limit int) ([]byte, error) { return m.data, nil }
-func (m *memoryClipboard) WriteText(v []byte) error           { m.data = append([]byte(nil), v...); return nil }
-
 func TestGraphemesAndIME(t *testing.T) {
 	s := State{}
 	s.Sync("e\u0301👩‍💻a")
@@ -53,22 +48,25 @@ func TestClipboardAndMask(t *testing.T) {
 	s := State{}
 	s.Sync("s3crét")
 	s.Select(0, len(s.Value))
-	c := &memoryClipboard{}
-	if err := s.Copy(c, true); err != nil || len(c.data) != 0 {
+	c := NewMockClipboard(t) // a masked copy must not write
+	if err := s.Copy(c, true); err != nil {
 		t.Fatal(err)
 	}
 	if s.Mask() != "••••••" {
 		t.Fatal(s.Mask())
 	}
-	c.data = []byte{0xff}
+	read := func(data []byte) {
+		c.EXPECT().ReadText(mock.Anything).Return(data, nil).Once()
+	}
+	read([]byte{0xff})
 	if changed, _ := s.Paste(c); changed {
 		t.Fatal(s)
 	}
-	c.data = []byte(strings.Repeat("x", MaxClipboardBytes+1))
+	read([]byte(strings.Repeat("x", MaxClipboardBytes+1)))
 	if changed, _ := s.Paste(c); changed {
 		t.Fatal(s)
 	}
-	c.data = []byte("ok")
+	read([]byte("ok"))
 	if changed, _ := s.Paste(c); !changed || s.Value != "ok" {
 		t.Fatal(s)
 	}

@@ -22,4 +22,17 @@ packages:
       filename: '{{.InterfaceName}}_mock_test.go'
     interfaces:
       IME:
+        configs:
+          - {}
+          # Also mocked next to the UI tests that drive the editors.
+          - dir: internal/ui
+            pkgname: ui
       Clipboard:
+        configs:
+          - {}
+          - dir: internal/ui
+            pkgname: ui
+      AsyncClipboard:
+        configs:
+          - dir: internal/ui
+            pkgname: ui
