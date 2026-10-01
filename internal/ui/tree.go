@@ -40,6 +40,7 @@ type Frame struct {
 	edits         map[string]*edit.State
 	clipboard     edit.Clipboard
 	owner         *runtime
+	arena         *elementArena
 	ime           edit.IME
 	state         interactionState
 	layout        layout.Output
@@ -56,12 +57,15 @@ type Node struct {
 type element struct {
 	identity      *identity
 	typ, role, id string
+	key           string // Key option, applied to identity when the element is built
+	hasKey        bool
 	classes       []string
 	inline        *css.Declarations
 	computed      *css.Computed
 	parent        *element
 	children      []*element
-	usedKeys      map[string]bool
+	prev          *element        // previous-frame counterpart while building; its identity is reused
+	usedKeys      map[string]bool // debug builds only
 	events        []inputEvent
 	disabled      bool
 	checked       bool
@@ -74,6 +78,7 @@ type element struct {
 	level         int
 	rect          layout.Rect // absolute geometry, see Node.Rect
 	hasRect       bool
+	ln            layout.Node // reused by layoutTree; never read after layout.Layout returns
 }
 
 func (n Node) valid() bool {
@@ -95,10 +100,18 @@ func (f *Frame) Root(options ...ContainerOption) Node {
 	if f.root != nil {
 		panic("nefergui: Root called twice")
 	}
-	root := &element{typ: "app", identity: &identity{typ: "app", path: "root"}, usedKeys: make(map[string]bool)}
+	root := f.arena.newElement()
+	root.typ = "app"
+	applyContainer(root, options)
+	if root.hasKey {
+		root.identity = &identity{key: root.key}
+	} else if p := f.previous; p != nil && p.identity != nil && p.identity.typ == "app" && p.identity.parent == nil && !p.identity.explicit {
+		root.identity, root.prev = p.identity, p
+	} else {
+		root.identity = &identity{typ: "app", path: "root"}
+	}
 	f.root = root
 	n := Node{f, root, f.generation}
-	applyContainer(root, options)
 	f.compute(root)
 	f.deliver(root)
 	return n
@@ -112,6 +125,16 @@ func (f *Frame) compute(e *element) {
 		e.computed = f.styles.Compute(&css.Element{Type: e.typ, ID: e.id, Classes: e.classes, Inline: e.inline, State: f.state.flags(e)}, p)
 	}
 }
+
+// refresh recomputes styles after the view ran and drops the previous-tree
+// links, which only serve identity reuse while building.
+func (f *Frame) refresh(e *element) {
+	f.compute(e)
+	e.prev = nil
+	for _, ch := range e.children {
+		f.refresh(ch)
+	}
+}
 func (f *Frame) deliver(e *element) {
 	for _, ev := range f.events {
 		if ev.Target.same(e.identity) {
@@ -123,20 +146,32 @@ func (n Node) child(typ, role string, options []ContainerOption) Node {
 	if !n.check() {
 		return Node{}
 	}
-	e := &element{typ: typ, role: role, parent: n.element, usedKeys: make(map[string]bool)}
+	e := n.frame.arena.newElement()
+	e.typ, e.role, e.parent = typ, role, n.element
 	applyContainer(e, options)
-	i := &identity{parent: n.element.identity, typ: typ, position: len(n.element.children)}
-	if e.identity != nil {
-		i.explicit = true
-		i.key = e.identity.key
-		i.position = 0
-		i.typ = ""
-		if n.element.usedKeys[i.key] && debugDiagnostics {
+	position := len(n.element.children)
+	i := n.reuseIdentity(e, position)
+	if i == nil {
+		i = &identity{parent: n.element.identity, typ: typ, position: position}
+		if e.hasKey {
+			i.explicit = true
+			i.key = e.key
+			i.position = 0
+			i.typ = ""
+		}
+		i.path = identityPath(i)
+	} else {
+		e.prev = n.element.prev.children[position]
+	}
+	if e.hasKey && debugDiagnostics {
+		if n.element.usedKeys == nil {
+			n.element.usedKeys = make(map[string]bool)
+		}
+		if n.element.usedKeys[i.key] {
 			n.frame.diagnostics = append(n.frame.diagnostics, fmt.Sprintf("duplicate sibling key %q", i.key))
 		}
 		n.element.usedKeys[i.key] = true
 	}
-	i.path = identityPath(i)
 	e.identity = i
 	if debugDiagnostics && !i.explicit && n.frame.previous != nil {
 		if prior := findIdentity(n.frame.previous, n.element.identity); prior != nil && i.position < len(prior.children) {
@@ -150,6 +185,32 @@ func (n Node) child(typ, role string, options []ContainerOption) Node {
 	n.frame.compute(e)
 	n.frame.deliver(e)
 	return Node{n.frame, e, n.generation}
+}
+
+// reuseIdentity returns the previous frame's identity for the child about to
+// be appended at position when it denotes the same path, so a steady frame
+// neither allocates identities nor rebuilds their path strings. It only looks
+// at the same sibling position; any other case builds a fresh identity, which
+// compares equal by value, so behaviour is unchanged. n.element.prev is set
+// only when n.element reuses its own previous identity, which makes pointer
+// equality of the parent a complete parent comparison.
+func (n Node) reuseIdentity(e *element, position int) *identity {
+	p := n.element.prev
+	if p == nil || position >= len(p.children) {
+		return nil
+	}
+	old := p.children[position].identity
+	if old == nil || old.parent != n.element.identity {
+		return nil
+	}
+	if e.hasKey {
+		if !old.explicit || old.key != e.key {
+			return nil
+		}
+	} else if old.explicit || old.position != position || old.typ != e.typ {
+		return nil
+	}
+	return old
 }
 func findIdentity(e *element, id *identity) *element {
 	if e == nil {

@@ -12,22 +12,41 @@ type ValueOption interface{ valueOption(*element) }
 
 // CommonOption is the concrete type of Key, ID, Class and Inline; it belongs
 // to every option family. It is exported only so the root facade can return it.
-type CommonOption struct{ apply func(*element) }
+// It is plain data rather than a closure, so creating one never allocates.
+type CommonOption struct {
+	kind commonKind
+	s    string
+}
 
+type commonKind uint8
+
+const (
+	optKey commonKind = iota
+	optID
+	optClass
+	optInline
+)
+
+func (o CommonOption) apply(e *element) {
+	switch o.kind {
+	case optKey:
+		e.key, e.hasKey = o.s, true
+	case optID:
+		e.id = o.s
+	case optClass:
+		e.classes = append(e.classes, o.s)
+	case optInline:
+		e.inline, _ = css.ParseInline(o.s)
+	}
+}
 func (o CommonOption) container(e *element)   { o.apply(e) }
 func (o CommonOption) button(e *element)      { o.apply(e) }
 func (o CommonOption) edit(e *element)        { o.apply(e) }
 func (o CommonOption) valueOption(e *element) { o.apply(e) }
-func Key(key string) CommonOption {
-	return CommonOption{func(e *element) { e.identity = &identity{key: key} }}
-}
-func ID(id string) CommonOption { return CommonOption{func(e *element) { e.id = id }} }
-func Class(class string) CommonOption {
-	return CommonOption{func(e *element) { e.classes = append(e.classes, class) }}
-}
-func Inline(src string) CommonOption {
-	return CommonOption{func(e *element) { e.inline, _ = css.ParseInline(src) }}
-}
+func Key(key string) CommonOption             { return CommonOption{optKey, key} }
+func ID(id string) CommonOption               { return CommonOption{optID, id} }
+func Class(class string) CommonOption         { return CommonOption{optClass, class} }
+func Inline(src string) CommonOption          { return CommonOption{optInline, src} }
 func applyContainer(e *element, opts []ContainerOption) {
 	for _, o := range opts {
 		o.container(e)

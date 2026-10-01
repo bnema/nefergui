@@ -108,8 +108,12 @@ func layoutKind(e *element) layout.Kind {
 		return layout.Box
 	}
 }
+
+// layoutTree fills the layout node embedded in each element. layout.Layout
+// does not retain its input, so the nodes are rebuilt in place every call.
 func (r *runtime) layoutTree(e *element) *layout.Node {
-	n := &layout.Node{ID: idKey(e.identity), Kind: layoutKind(e), Content: e.text, ImageSize: e.imageSize, Image: e.image, NoWrap: e.typ == "input"}
+	n := &e.ln
+	*n = layout.Node{ID: idKey(e.identity), Kind: layoutKind(e), Content: e.text, ImageSize: e.imageSize, Image: e.image, NoWrap: e.typ == "input", Children: n.Children[:0]}
 	if e.computed != nil {
 		n.Style = e.computed.Style
 	}

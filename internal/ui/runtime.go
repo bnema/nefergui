@@ -31,6 +31,8 @@ type runtime struct {
 	wake                  chan struct{}
 	generation            uint64
 	committed             *element
+	arenas                [2]elementArena // one holds the committed tree, the other builds the next
+	committedArena        int
 	styles                *css.Engine
 	output                layout.Output
 	state                 interactionState
@@ -120,7 +122,12 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	state := r.state
 	width, height := r.width, r.height
 	r.mu.Unlock()
-	f := &Frame{width: width, height: height, generation: gen, active: true, events: events, previous: previous, styles: r.styles, state: state, edits: r.edits, clipboard: r.clipboard, ime: r.ime, layout: r.output, owner: r}
+	// Build in the arena that does not hold the committed tree, which this
+	// frame reads as previous. A frame that fails to commit leaves it as is.
+	next := 1 - r.committedArena
+	arena := &r.arenas[next]
+	arena.reset()
+	f := &Frame{arena: arena, width: width, height: height, generation: gen, active: true, events: events, previous: previous, styles: r.styles, state: state, edits: r.edits, clipboard: r.clipboard, ime: r.ime, layout: r.output, owner: r}
 	defer func() {
 		f.active = false
 		r.styles.EndFrame()
@@ -138,14 +145,7 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	// State can change while the view runs. Schedule another frame instead of
 	// overwriting that newer input with this frame's snapshot.
 	if f.root != nil {
-		var refresh func(*element)
-		refresh = func(e *element) {
-			f.compute(e)
-			for _, ch := range e.children {
-				refresh(ch)
-			}
-		}
-		refresh(f.root)
+		f.refresh(f.root)
 		input := r.layoutTree(f.root)
 		out, err := layout.Layout(input, layout.Options{Width: r.width, Height: r.height, TextEngine: r.textEngine})
 		if err != nil {
@@ -168,7 +168,7 @@ func (r *runtime) Build(view func(*Frame)) bool {
 		r.paintIndicators(f.root, &out)
 		r.output = out
 	}
-	r.committed = f.root
+	r.committed, r.committedArena = f.root, next
 	// Events mutate the model while the view runs, so elements declared before
 	// the handling control painted the previous value. One follow-up frame,
 	// without events, shows the settled state; it cannot schedule another.
