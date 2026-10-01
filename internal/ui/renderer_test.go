@@ -275,3 +275,110 @@ func TestTextIntAndMasked(t *testing.T) {
 		t.Fatalf("texts: %q %q %q", c[0].text, c[1].text, c[2].text)
 	}
 }
+
+func TestRendererLockModifiersDoNotChangeKeyHandling(t *testing.T) {
+	locks := []Modifiers{0, ModCapsLock, ModNumLock, ModCapsLock | ModNumLock}
+	if ModShift != 1 || ModCtrl != 2 || ModAlt != 4 || ModSuper != 8 || ModCapsLock != 16 || ModNumLock != 32 {
+		t.Fatal("modifier bit values changed")
+	}
+	for _, lock := range locks {
+		r, tg := newTestRenderer(t)
+		value := "hello"
+		var out Output
+		view := func(f *Frame, v *string) { f.Root().Input("name", v, Key("name"), Inline("width:100px;height:20px")) }
+		tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
+		r.Resize(200, 100, 1)
+		drawOK(tg, nil).Maybe()
+		settle := func() {
+			for i := 0; i < 3; i++ {
+				if _, err := r.Render(&out, &value, view); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		settle()
+		r.Input(&Input{Kind: InputPointerPress, X: 5, Y: 5, Button: 0x110, Pressed: true, Modifiers: lock})
+		r.Input(&Input{Kind: InputPointerRelease, X: 5, Y: 5, Button: 0x110, Modifiers: lock})
+		settle()
+		// Ctrl+A selects all, so the next text replaces the value.
+		r.Input(&Input{Kind: InputKey, Keysym: 'a', Pressed: true, Text: []byte("a"), Modifiers: ModCtrl | lock})
+		settle()
+		r.Input(&Input{Kind: InputKey, Keysym: 'X', Pressed: true, Text: []byte("X"), Modifiers: lock})
+		settle()
+		if value != "X" {
+			t.Fatalf("lock=%#x: Ctrl+A then text: value=%q, want X", lock, value)
+		}
+		// Shift+Left extends the selection, so the next text replaces "X".
+		r.Input(&Input{Kind: InputKey, Keysym: 0xff51, Pressed: true, Modifiers: ModShift | lock})
+		settle()
+		r.Input(&Input{Kind: InputKey, Keysym: 'y', Pressed: true, Text: []byte("y"), Modifiers: lock})
+		settle()
+		if value != "y" {
+			t.Fatalf("lock=%#x: Shift+Left then text: value=%q, want y", lock, value)
+		}
+	}
+}
+
+func TestRendererLockModifiersDoNotChangeTabAndReturn(t *testing.T) {
+	for _, lock := range []Modifiers{0, ModCapsLock, ModNumLock, ModCapsLock | ModNumLock} {
+		r, tg := newTestRenderer(t)
+		m := testModel{}
+		var out Output
+		tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
+		r.Resize(200, 100, 1)
+		drawOK(tg, nil).Maybe()
+		settle := func() {
+			for i := 0; i < 3; i++ {
+				if _, err := r.Render(&out, &m, testView); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		settle()
+		r.Input(&Input{Kind: InputKey, Keysym: 0xff09, Pressed: true, Modifiers: lock})
+		r.Input(&Input{Kind: InputKey, Keysym: 0xff0d, Pressed: true, Modifiers: lock})
+		settle()
+		if m.clicks != 1 {
+			t.Fatalf("lock=%#x: Tab+Return clicks=%d, want 1", lock, m.clicks)
+		}
+	}
+}
+
+func TestRendererLockModifiersDoNotChangeShiftClick(t *testing.T) {
+	run := func(lock Modifiers) string {
+		r, tg := newTestRenderer(t)
+		value := "hello"
+		var out Output
+		view := func(f *Frame, v *string) { f.Root().Input("name", v, Key("name"), Inline("width:100px;height:20px")) }
+		tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
+		r.Resize(200, 100, 1)
+		drawOK(tg, nil).Maybe()
+		settle := func() {
+			for i := 0; i < 3; i++ {
+				if _, err := r.Render(&out, &value, view); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		settle()
+		click := func(x float64, mods Modifiers) {
+			r.Input(&Input{Kind: InputPointerPress, X: x, Y: 5, Button: 0x110, Pressed: true, Modifiers: mods})
+			r.Input(&Input{Kind: InputPointerRelease, X: x, Y: 5, Button: 0x110, Modifiers: mods})
+			settle()
+		}
+		click(1, lock)
+		click(95, ModShift|lock)
+		r.Input(&Input{Kind: InputKey, Keysym: 'Z', Pressed: true, Text: []byte("Z"), Modifiers: lock})
+		settle()
+		return value
+	}
+	want := run(0)
+	if want != "Z" {
+		t.Fatalf("Shift+click then text: value=%q, want Z", want)
+	}
+	for _, lock := range []Modifiers{ModCapsLock, ModNumLock, ModCapsLock | ModNumLock} {
+		if got := run(lock); got != want {
+			t.Fatalf("lock=%#x: value=%q, want %q", lock, got, want)
+		}
+	}
+}

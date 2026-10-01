@@ -92,7 +92,8 @@ func Password(v bool) EditOption { return ui.Password(v) }
 // Frame.SetInputRects and Output.InputRects.
 type Rect = ui.Rect
 
-// InputKind classifies an Input; Modifiers is a bit set of held modifiers.
+// InputKind classifies an Input; Modifiers is a bit set of held modifiers and
+// latched Caps Lock and Num Lock state.
 type (
 	InputKind = ui.InputKind
 	Modifiers = ui.Modifiers
@@ -113,4 +114,7 @@ const (
 	ModCtrl  = ui.ModCtrl
 	ModAlt   = ui.ModAlt
 	ModSuper = ui.ModSuper
+
+	ModCapsLock = ui.ModCapsLock
+	ModNumLock  = ui.ModNumLock
 )
