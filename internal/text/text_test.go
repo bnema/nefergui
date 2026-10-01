@@ -40,7 +40,7 @@ func TestScriptsAndMetrics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(l.Lines) == 0 || l.Width <= 0 || l.Height <= 0 || l.MinContent > l.MaxContent+1 {
+			if len(l.Lines) == 0 || l.Width <= 0 || l.Height <= 0 {
 				t.Fatalf("bad metrics: %+v", l)
 			}
 			found, rtl, missing := false, false, false
@@ -90,10 +90,11 @@ func TestScriptsAndMetrics(t *testing.T) {
 	}
 	wide, _ := e.Measure("one two three four five", r, 220)
 	narrow, _ := e.Measure("one two three four five", r, 60)
-	if narrow.Height < wide.Height || narrow.MinContent != wide.MinContent || wide.MaxContent != narrow.MaxContent {
+	if narrow.Height < wide.Height || len(narrow.Lines) <= len(wide.Lines) {
 		t.Errorf("wrap monotonicity: %+v %+v", narrow, wide)
 	}
 }
+
 func TestCorruptAndMatching(t *testing.T) {
 	if _, err := Load(sourceMap{"broken.ttf": []byte("not a font")}); err == nil {
 		t.Fatal("accepted corrupt font")
@@ -451,7 +452,7 @@ func BenchmarkMeasureMissShort(b *testing.B) {
 // allocBaselineMeasureMiss is the measured allocation count of an uncached
 // short label; most of the remainder is inside go-text segmentation and
 // wrapping. Lower it with each optimization.
-const allocBaselineMeasureMiss = 33
+const allocBaselineMeasureMiss = 24
 
 func TestAllocMeasureMissShort(t *testing.T) {
 	if raceEnabled {

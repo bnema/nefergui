@@ -41,9 +41,9 @@ type Line struct {
 	Width, Baseline, Height float64
 }
 type Layout struct {
-	Lines                                                       []Line
-	Direction                                                   di.Direction // paragraph basis, auto resolved by bidi analysis
-	Width, Height, MinContent, MaxContent, Baseline, LineHeight float64
+	Lines                               []Line
+	Direction                           di.Direction // paragraph basis, auto resolved by bidi analysis
+	Width, Height, Baseline, LineHeight float64
 }
 
 // Engine is single-goroutine only: Measure and EndFrame are not synchronized.
@@ -54,7 +54,6 @@ type Engine struct {
 	seg     shaping.Segmenter
 	shaper  shaping.HarfbuzzShaper
 	wrapper shaping.LineWrapper
-	never   shaping.LineWrapper
 	cache   measureCache
 	scratch measureScratch
 }
@@ -281,7 +280,6 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 }
 
 // Measure shapes, wraps (UAX#14) and positions runs. Width <= 0 means unbounded.
-// MinContent is the largest unbreakable UAX#14 segment; max-content ignores soft breaks.
 // Every UAX#9 paragraph resolves its own direction; line baselines stack in logical px.
 //
 // Results are cached per (text, request, width) until EndFrame evicts them.
@@ -356,30 +354,6 @@ func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 	result.LineHeight = height
 	if len(text) == 0 {
 		return result, nil
-	}
-	var minWidth float64
-	// Compute exact word widths even when a shaped run crosses a break opportunity.
-	// Wrapper's Never policy at zero width supplies min-content using its native glyph-cluster mapping.
-	words, _ := e.never.WrapParagraphF(shaping.WrapConfig{Direction: direction, BreakPolicy: shaping.Never, DisableTrailingWhitespaceTrim: true}, 1, text, e.scratch.iterate(outs))
-	for _, line := range words {
-		w := 0.0
-		for _, o := range line {
-			w += float64(o.Advance) / 64
-		}
-		if w > minWidth {
-			minWidth = w
-		}
-	}
-	result.MinContent = minWidth
-	maxLines, _ := e.wrapper.WrapParagraphF(shaping.WrapConfig{Direction: direction, DisableTrailingWhitespaceTrim: true}, fixed.Int26_6(1<<30), text, e.scratch.iterate(outs))
-	for _, line := range maxLines {
-		w := 0.0
-		for _, o := range line {
-			w += float64(o.Advance) / 64
-		}
-		if w > result.MaxContent {
-			result.MaxContent = w
-		}
 	}
 	limit := fixed.Int26_6(1 << 30)
 	if width > 0 {

@@ -184,7 +184,7 @@ func TestRendererGPUResizeRetiresBuffers(t *testing.T) {
 // allocBaselineRenderer is the measured allocation count of one steady
 // Render+Released cycle (radv); it is lowered with each optimization until it
 // reaches the target of 0.
-const allocBaselineRenderer = 48
+const allocBaselineRenderer = 39
 
 // TestAllocRendererSteadyFrame measures Render with a view whose number
 // changes on every frame and an unchanged structure. It runs on the real GPU
