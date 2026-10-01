@@ -221,6 +221,7 @@ func (t *Target) closeSlot(slot *Slot) error {
 	if slot.PendingWait != nil {
 		slot.PendingWait.Close()
 	}
+	slot.spare.Close()
 	if slot.Wait != nil {
 		slot.Wait.Close()
 	}
@@ -315,7 +316,9 @@ func (t *Target) submit(b *buffers.Buffer, slot *Slot, display []layout.Command,
 		return false, fmt.Errorf("unsupported list operations: %v", stats.Skipped)
 	}
 	if slot.Wait != nil && slot.WaitInFlight {
-		slot.Wait.Close()
+		// Draw selected this slot only after its frame was Ready, so the
+		// submission that waited on Wait has completed and consumed it.
+		slot.recycle(slot.Wait)
 		slot.Wait = nil
 		slot.WaitInFlight = false
 	}
@@ -331,7 +334,7 @@ func (t *Target) submit(b *buffers.Buffer, slot *Slot, display []layout.Command,
 	}
 	slot.First = false
 	// From here the buffer is committed to the pipeline; failures are fatal.
-	fd, err := slot.Frame.Signal.Export()
+	fd, err := slot.Frame.ExportSignal()
 	if err != nil {
 		return false, t.fail(err)
 	}
@@ -419,6 +422,16 @@ func drainEventFD(fd int) error {
 	return nil
 }
 
+// acquireWait returns an unsignaled binary semaphore for a release wait,
+// reusing the slot's spare instead of creating one per frame.
+func (t *Target) acquireWait(slot *Slot) (*vkdevice.BinaryFence, error) {
+	if w := slot.spare; w != nil {
+		slot.spare = nil
+		return w, nil
+	}
+	return t.Device.NewBinaryFence(false)
+}
+
 func (t *Target) release(slot *Slot, point uint64) error {
 	b := slot.Buffer
 	// An older completion cannot authorize a newer commit of the same image.
@@ -433,7 +446,7 @@ func (t *Target) release(slot *Slot, point uint64) error {
 		if err != nil {
 			return err
 		}
-		wait, err := t.Device.NewBinaryFence(false)
+		wait, err := t.acquireWait(slot)
 		if err != nil {
 			_ = unix.Close(fd)
 			return err
@@ -476,7 +489,11 @@ func (t *Target) finishPending() (bool, error) {
 			continue
 		}
 		if slot.Wait != nil {
-			slot.Wait.Close()
+			if slot.WaitInFlight {
+				slot.recycle(slot.Wait) // submission is Ready: the wait was consumed
+			} else {
+				slot.Wait.Close()
+			}
 		}
 		slot.Wait, slot.PendingWait, slot.WaitInFlight = slot.PendingWait, nil, false
 		if err := t.Pool.Reuse(slot.Buffer, true); err != nil {
