@@ -580,7 +580,7 @@ func (c context) children(n *Node, r *Result, s css.Style, depth int) error {
 		if absolute {
 			cw, chh = safe(ch.Rect.X+ch.Rect.W), safe(ch.Rect.Y+ch.Rect.H)
 		}
-		r.Children = append(r.Children, child)
+		r.Children = appendChild(r.Children, child, len(n.Children))
 		r.ContentSize.W = math.Max(r.ContentSize.W, cw)
 		if n.Kind == Stack {
 			r.ContentSize.H = math.Max(r.ContentSize.H, chh)
@@ -590,6 +590,15 @@ func (c context) children(n *Node, r *Result, s css.Style, depth int) error {
 		}
 	}
 	return nil
+}
+
+// appendChild appends child, sizing the first allocation for the n input
+// children so a node's result children cost one allocation, not a growth chain.
+func appendChild(children []*Result, child *Result, n int) []*Result {
+	if children == nil {
+		children = make([]*Result, 0, n)
+	}
+	return append(children, child)
 }
 
 type flexItem struct {
@@ -880,7 +889,7 @@ func (c context) flex(n *Node, r *Result, s css.Style, depth int) error {
 				return err
 			}
 			if child != nil {
-				r.Children = append(r.Children, child)
+				r.Children = appendChild(r.Children, child, len(n.Children))
 				cw, ch := envelope(child)
 				r.ContentSize.W = math.Max(r.ContentSize.W, child.Border.X-r.Content.X+cw)
 				r.ContentSize.H = math.Max(r.ContentSize.H, child.Border.Y-r.Content.Y+ch)
