@@ -40,7 +40,12 @@ type Atlas struct {
 	entries        map[Key]atlasEntry
 	frame          uint64
 	dirty          map[int]image.Rectangle
+	empty          int // cached empty-glyph entries, bounded by maxEmptyGlyphs
 }
+
+// maxEmptyGlyphs bounds cached empty glyphs (spaces), which own no page and so
+// are never dropped by page eviction.
+const maxEmptyGlyphs = 1024
 
 func NewAtlas(size, maxPages int) (*Atlas, error) {
 	if size < 4 || size > 4096 || maxPages < 1 || maxPages > 64 {
@@ -94,6 +99,9 @@ func (a *Atlas) Lookup(k Key) (Placement, bool) {
 	if !ok {
 		return Placement{}, false
 	}
+	if e.placement.Page < 0 {
+		return e.placement, true // empty glyph: no page to keep alive
+	}
 	e.generation = a.frame
 	a.entries[k] = e
 	a.pages[e.placement.Page].generation = a.frame
@@ -111,7 +119,20 @@ func (a *Atlas) Insert(k Key, m Mask) (Placement, error) {
 		return Placement{}, errors.New("glyph too large")
 	}
 	if w == 0 || h == 0 {
-		return Placement{Page: -1, Origin: m.Origin}, nil
+		// Cache empty glyphs (spaces) too, so they are not rasterized every
+		// frame. They own no page, so a full set is dropped instead of evicted.
+		if a.empty >= maxEmptyGlyphs {
+			for key, e := range a.entries {
+				if e.placement.Page < 0 {
+					delete(a.entries, key)
+				}
+			}
+			a.empty = 0
+		}
+		place := Placement{Page: -1, Origin: m.Origin}
+		a.entries[k] = atlasEntry{placement: place}
+		a.empty++
+		return place, nil
 	}
 	chosen := -1
 	var x, y int
