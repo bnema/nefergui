@@ -19,6 +19,7 @@ type Readback struct {
 	Buffer        vulkan.Buffer
 	Memory        vulkan.DeviceMemory
 	width, height int32
+	region        vulkan.BufferImageCopy // reused: bindings heap-allocate pointer arguments
 }
 
 func (d *Device) NewReadback(width, height int32) (r *Readback, err error) {
@@ -63,8 +64,8 @@ func (d *Device) NewReadback(width, height int32) (r *Readback, err error) {
 	return r, nil
 }
 func (r *Readback) record(cmd vulkan.CommandBuffer, img vulkan.Image) {
-	copy := vulkan.BufferImageCopy{ImageSubresource: vulkan.ImageSubresourceLayers{AspectMask: vulkan.ImageAspectColorBit, LayerCount: 1}, ImageExtent: vulkan.Extent3D{Width: uint32(r.width), Height: uint32(r.height), Depth: 1}}
-	r.device.Dispatch.CmdCopyImageToBuffer(cmd, img, vulkan.ImageLayoutTransferSrcOptimal, r.Buffer, 1, &copy)
+	r.region = vulkan.BufferImageCopy{ImageSubresource: vulkan.ImageSubresourceLayers{AspectMask: vulkan.ImageAspectColorBit, LayerCount: 1}, ImageExtent: vulkan.Extent3D{Width: uint32(r.width), Height: uint32(r.height), Depth: 1}}
+	r.device.Dispatch.CmdCopyImageToBuffer(cmd, img, vulkan.ImageLayoutTransferSrcOptimal, r.Buffer, 1, &r.region)
 }
 
 // Copy returns the completed readback as an owned image whose pixels are still

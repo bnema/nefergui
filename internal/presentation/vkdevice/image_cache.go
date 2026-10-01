@@ -35,6 +35,9 @@ type imageCache struct {
 	// inflight holds submitted frames whose image serial is not settled yet.
 	// resolve polls them so an idle frame slot cannot stall completion.
 	inflight map[*Frame]struct{}
+	// batches is the backing store of resolve's result. The caller records it
+	// before the next resolve and never retains it.
+	batches []Batch
 }
 
 func (c *imageCache) Close() {
@@ -145,7 +148,8 @@ func (c *imageCache) resolve(f *Frame, batches []Batch) ([]Batch, error) {
 	f.imageSerial = c.serial
 	f.imageCopies = f.imageCopies[:0]
 	c.dispose(c.policy.begin(c.serial, c.policy.completed))
-	result := append([]Batch(nil), batches...)
+	c.batches = append(c.batches[:0], batches...)
+	result := c.batches
 	var pixels []byte
 	// Validate the entire frame before creating or changing any GPU resources.
 	// In particular, do not partially record an over-budget frame.
