@@ -31,6 +31,7 @@ type runtime struct {
 	wake                  chan struct{}
 	generation            uint64
 	committed             *element
+	frame                 Frame           // reused every build; Node handles are fenced by generation
 	arenas                [2]elementArena // one holds the committed tree, the other builds the next
 	committedArena        int
 	styles                *css.Engine
@@ -127,7 +128,8 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	next := 1 - r.committedArena
 	arena := &r.arenas[next]
 	arena.reset()
-	f := &Frame{arena: arena, width: width, height: height, generation: gen, active: true, events: events, previous: previous, styles: r.styles, state: state, edits: r.edits, clipboard: r.clipboard, ime: r.ime, layout: r.output, owner: r}
+	r.frame = Frame{arena: arena, width: width, height: height, generation: gen, active: true, events: events, previous: previous, styles: r.styles, state: state, edits: r.edits, clipboard: r.clipboard, ime: r.ime, layout: r.output, owner: r}
+	f := &r.frame
 	defer func() {
 		f.active = false
 		r.styles.EndFrame()
