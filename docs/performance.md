@@ -29,7 +29,7 @@ The demo-frame benchmark builds the light, comfortable document workspace with a
 
 Natural container measurement prevents nested flex text from collapsing, at a CPU cost that grows with nesting depth. Layout1000 measures about 36% slower than the earlier 656 µs run; allocation count stays at 1,027. A per-layout node/width cache increased time and retained allocation in a trial and is not used. LayoutPaintTree stays near its previous cost. These are correctness/performance tradeoffs, not a claim of universal speed improvement.
 
-`TestAllocDemoFrame` checks the 1,100 allocs/op limit with `testing.AllocsPerRun`. `TestAllocRendererSteadyFrame` measures `Renderer.Render` for a view whose text changes through `TextInt`; it measured 244 allocations per steady Render+Released cycle on 2026-10-01 (the guard fails above that baseline), needs a GPU, and is skipped unless `NEFERGUI_RENDER_NODE` is set. Focused tests also check constant quad allocation, bounded paint allocation, allocation-free warm list-buffer reuse, and allocation-free idle wait results. The real-ioctl allocation test is opt-in via `NEFERGUI_RENDER_NODE`. The other table budgets are reference targets, not automated assertions.
+`TestAllocDemoFrame` checks the 1,100 allocs/op limit with `testing.AllocsPerRun`. `TestAllocRendererSteadyFrame` measures `Renderer.Render` for a view whose text changes through `TextInt`; it measured 244 allocations per steady Render+Released cycle on 2026-10-01 (the guard fails above that baseline), needs a GPU, and is skipped unless `NEFERGUI_RENDER_NODE` is set. Focused tests also check constant quad allocation, bounded paint allocation, allocation-free warm list-buffer reuse and allocation-free idle wait results (the real-ioctl variant is opt-in via `NEFERGUI_RENDER_NODE`). The other table budgets are reference targets, not automated assertions.
 
 Frame construction limits allocation churn through:
 
@@ -39,14 +39,7 @@ Frame construction limits allocation churn through:
 - font family normalization at font load and identity path keys computed once per element;
 - `text.Engine.Measure` caching by text, request and width. Entries unused for two frames are evicted; the cache holds at most 4,096 entries. Results are immutable; callers use `Layout.Clone` before adjusting positions.
 
-`Renderer.Render` builds a frame only on input or a redraw request. Idle frame construction stops. Expected release-wait timeouts return without constructing errors; real ioctl failures retain their context and wrapped errno.
-
-On commit `9064a73`, measured **2026-09-30, 06:34 CEST**, `BenchmarkWaitPointIdle` on an unsignaled real DRM timeline took a median **21,370,548 ns/op, 0 B/op, 0 allocs/op**. This includes the requested 20 ms timeout, not active CPU time:
-
-```sh
-NEFERGUI_RENDER_NODE=/dev/dri/renderD128 CGO_ENABLED=0 GOWORK=off \
-  go test -run '^$' -bench BenchmarkWaitPointIdle -benchtime=10x -benchmem -count=5 ./internal/presentation/syncobj
-```
+`Renderer.Render` builds a frame only on input or a redraw request. Idle frame construction stops.
 
 Profile frame construction with:
 
@@ -77,13 +70,9 @@ An external Go module with minimal-counter and demo views, a 960×640 window at 
 
 Heap/RSS/PSS use the default Go profiling rate. Allocation figures use separate `GODEBUG=memprofilerate=1` runs: subtract cumulative profiles at frames 1 and 1,000, exclude stacks containing the measurement sampler or `runtime/pprof`, sum the remaining flat allocated bytes, then divide by 999 frames. These runs recorded about **41–43% less allocation churn** than the baseline. They do not demonstrate an equivalent reduction in RSS or frame latency. Single-run process-memory values vary with runtime and driver behavior.
 
-The minimal view starts at about 0.75 MiB live Go heap, reaches 5.1 MiB after the first frame, and returns to about 0.9 MiB after closing. No sustained live-heap growth was observed over 3,000 frames. Retained heap stayed close to baseline; the session's reusable conversion buffers retain a small amount of storage. Driver mappings and Go heap capacity can remain resident after closing; RSS is not a leak measurement on its own.
+The minimal view starts at about 0.75 MiB live Go heap, reaches 5.1 MiB after the first frame, and returns to about 0.9 MiB after closing. No sustained live-heap growth was observed over 3,000 frames. Retained heap stayed close to baseline; the reusable conversion buffers retain a small amount of storage. Driver mappings and Go heap capacity can remain resident after closing; RSS is not a leak measurement on its own.
 
 DRM counters reported about 41 MiB VRAM and 4 MiB GTT once all three presentation buffers were active, unchanged from baseline and released at shutdown. Window dimensions, scale, fonts and driver affect these figures. These are measurements on one stack, not portable limits.
-
-A separate approximately 20-second idle profile recorded about **91 KiB** allocated under `syncobj.WaitPoint` in the baseline and **no allocations attributed to that path** on the measured implementation. Other runtime and consumer instrumentation allocations remain; this is not a claim that the whole process allocates nothing at idle.
-
-The measured commit includes `purego-vulkan` v0.6.0, `wlturbo` v0.3.0 and `typesetting` v0.3.5. The subsequent `2e4532d` commit adds an empty-glyph regression test and raises the minimum compositor version checked at startup; it does not change the measured frame paths on this version-6 compositor. The comparison therefore includes both library optimizations and dependency updates, not isolated effects for each.
 
 Prepared quads and layout painting still allocate detached outputs. Editor and indicator command insertion can also reallocate the display list; those UI-owned costs are included in the demo measurements and are not optimized here. Glyph rasterization and glyph-key hashing also appear in cumulative allocation profiles.
 

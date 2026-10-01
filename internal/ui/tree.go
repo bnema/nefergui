@@ -1,5 +1,5 @@
 // Package ui owns the immediate-mode frame tree, controls, editors, input
-// routing and the Wayland run loop behind the public nefergui facade.
+// routing and the Renderer behind the public nefergui facade.
 package ui
 
 import (

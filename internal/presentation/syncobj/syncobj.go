@@ -118,9 +118,8 @@ func (n *Node) Destroy(handle uint32) error {
 	return n.ioctl(ioctlDestroy, unsafe.Pointer(&destroyArg{Handle: handle}))
 }
 
-// ExportTimeline returns a new owned syncobj FD (not a sync_file). The caller
-// hands it to WLTurbo's ImportTimeline, which closes only after a successful
-// request send; on send failure the caller must close the FD.
+// ExportTimeline returns a new owned syncobj FD (not a sync_file). The
+// caller owns it and closes it, or passes a duplicate to its Wayland client.
 func (n *Node) ExportTimeline(handle uint32) (int, error) {
 	a := handleArg{Handle: handle, FD: -1}
 	if err := n.ioctl(ioctlHandleToFD, unsafe.Pointer(&a)); err != nil {
@@ -210,7 +209,7 @@ func (n *Node) ReleaseFence(timeline uint32, point uint64) (int, error) {
 }
 
 // WaitPoint waits for a submitted release point for at most timeout. Call it
-// only from a waiter goroutine, never from the presentation loop. WAIT_FOR_SUBMIT
+// only off the render path: it can block for up to timeout. WAIT_FOR_SUBMIT
 // handles the interval before the compositor attaches its fence to the point.
 func (n *Node) WaitPoint(handle uint32, point uint64, timeout time.Duration) (bool, error) {
 	if timeout < 0 || timeout > time.Second {
