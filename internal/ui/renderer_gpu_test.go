@@ -159,6 +159,11 @@ func TestRendererGPUResizeRetiresBuffers(t *testing.T) {
 	if err := r.Released(old); err != nil {
 		t.Fatal(err)
 	}
+	// Retirement waits for the old frame's GPU work; a late one is reported by
+	// a later Render, so let it finish to keep the test deterministic.
+	if err := tg.Slots[old].Frame.Wait(); err != nil {
+		t.Fatal(err)
+	}
 	r.Resize(96, 64, 1)
 	if ok, err := r.Render(&out, &m, view); !ok || err != nil {
 		t.Fatalf("after resize: ok=%v err=%v", ok, err)
