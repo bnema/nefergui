@@ -189,6 +189,15 @@ type Arena struct {
 	glyphs    slab[Glyph]
 }
 
+// Keep makes display, the Output.Display of the arena's last Layout after the
+// caller appended to it, the list the arena recycles next. Without it, a list
+// that outgrew its arena block is reallocated by the caller every frame.
+func (a *Arena) Keep(display []Command) {
+	if cap(display) > cap(a.commands) {
+		a.commands = display[:0]
+	}
+}
+
 var ErrDepth = errors.New("layout: tree depth exceeds 256")
 
 // Layout does not mutate inputs. The caller must not create cycles in the node tree.
@@ -210,15 +219,18 @@ func Layout(root *Node, options Options) (Output, error) {
 // display paints the placed tree into a list sized once from the tree.
 func (c context) display(root *Node, tree *Result) []Command {
 	n := countCommands(root, tree)
-	if n.commands == 0 {
-		return nil
-	}
 	a := c.arena
 	clear(a.commands[:cap(a.commands)]) // callers may have appended in place
-	out := slices.Grow(a.commands[:0], n.commands)
+	if cap(a.commands) > max(n.commands, maxSlabKeep) {
+		a.commands = nil // do not pin one huge frame's list
+	}
 	a.shadows.reset(n.shadows)
 	a.runs.reset(n.runs)
 	a.glyphs.reset(n.glyphs)
+	if n.commands == 0 {
+		return nil
+	}
+	out := slices.Grow(a.commands[:0], n.commands)
 	c.paint(root, tree, &out)
 	a.commands = out
 	return out

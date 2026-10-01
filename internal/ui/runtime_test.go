@@ -144,17 +144,35 @@ func TestCommittedLayoutSurvivesNextBuild(t *testing.T) {
 	if got, _ := snapshot(); got != idB {
 		t.Fatalf("panicked frame replaced the output: %q, want %q", got, idB)
 	}
-	// Rotation still alternates after the failure: two more builds keep the
-	// latest output and never hand out the arena it lives in.
+	// A failed layout writes into the free arena but commits nothing.
+	r.Redraw()
+	if r.Build(func(f *Frame) {
+		n := f.Root()
+		for range 300 { // deeper than layout allows
+			n = n.Box()
+		}
+	}) {
+		t.Fatal("too deep layout committed")
+	}
+	if got, _ := snapshot(); got != idB {
+		t.Fatalf("failed layout replaced the output: %q, want %q", got, idB)
+	}
+	// Rotation still alternates after both failures: each build keeps the
+	// previously committed layout intact.
 	for _, label := range []string{"d", "e"} {
-		before, _ := snapshot()
+		prevTree, before := r.output.Tree, idB
 		r.Redraw()
-		r.Build(func(f *Frame) {
-			if got, _ := snapshot(); got != before {
-				t.Errorf("output overwritten before commit: %q, want %q", got, before)
-			}
-			view(label)(f)
-		})
+		if !r.Build(view(label)) {
+			t.Fatalf("build %q skipped", label)
+		}
+		leaf := prevTree
+		for len(leaf.Children) > 0 {
+			leaf = leaf.Children[0]
+		}
+		if leaf.ID != before {
+			t.Fatalf("build %q overwrote the previous layout: %q, want %q", label, leaf.ID, before)
+		}
+		idB, _ = snapshot()
 	}
 }
 

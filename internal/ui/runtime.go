@@ -175,6 +175,7 @@ func (r *runtime) Build(view func(*Frame)) bool {
 		}
 		r.paintEditors(f.root, &out)
 		r.paintIndicators(f.root, &out)
+		opts.Arena.Keep(out.Display) // recycle the list grown by the decorations
 		r.output, r.outputArena = out, nextLayout
 	}
 	r.committed, r.committedArena = f.root, next

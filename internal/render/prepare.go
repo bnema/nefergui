@@ -117,13 +117,10 @@ func (p *Preparer) PrepareInto(quads []Quad, commands []layout.Command, scale fl
 		return Frame{}, fmt.Errorf("render: invalid frame dimensions, scale, or atlas")
 	}
 	p.Atlas.BeginFrame()
-	frame := Frame{}
 	clear(quads[:cap(quads)]) // drop image and glyph references from the last frame
-	if n := quadCapacity(commands); n > 0 {
-		// Bound the initial reservation; larger visible frames grow through
-		// append after culling.
-		frame.Quads = slices.Grow(quads[:0], n)
-	}
+	// Bound the initial reservation; larger visible frames grow through
+	// append after culling.
+	frame := Frame{Quads: slices.Grow(quads[:0], quadCapacity(commands))}
 	clip := layout.Rect{W: float64(width), H: float64(height)}
 	var stackBuf [8]layout.Rect // nested clips beyond this depth grow on the heap
 	stack := stackBuf[:0]

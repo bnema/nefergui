@@ -10,7 +10,7 @@ The demo-frame benchmark builds the light, comfortable document workspace with a
 
 | Package / benchmark | Median ns/op | Median B/op | Median allocs/op | Budget ns/op | Budget B/op | Budget allocs/op |
 |---|---:|---:|---:|---:|---:|---:|
-| internal/ui / DemoFrame | 176,882 | 277,695 | 514 | 360,000 | 560,000 | 600 |
+| internal/ui / DemoFrame | 176,882 | 277,695 | 509 | 360,000 | 560,000 | 600 |
 | render / Prepare | 39,267 | 57,344 | 1 | 80,000 | 115,000 | 2 |
 | render / PrepareBoxes | 61,463 | 229,378 | 1 | 125,000 | 460,000 | 2 |
 | render / ListBatches | 102,822 | 420,481 | 2 | 210,000 | 850,000 | 4 |
