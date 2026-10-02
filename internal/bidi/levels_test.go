@@ -62,3 +62,25 @@ func TestAllocResolveLeftToRight(t *testing.T) {
 		t.Fatalf("reused levels not cleared: %v", levels)
 	}
 }
+
+func TestResolveIntoFullPathIgnoresDst(t *testing.T) {
+	text := []rune("abc \u05d0\u05d1\u05d2 12")
+	breaks := []int{len(text)}
+	for _, base := range []BaseDirection{Auto, RTL} {
+		want, wantPara, err := Resolve(text, base, breaks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := make([]uint8, len(text))
+		for i := range dst {
+			dst[i] = 7
+		}
+		got, para, err := ResolveInto(dst, text, base, breaks)
+		if err != nil || para != wantPara || !slices.Equal(got, want) {
+			t.Fatalf("base %d: got %v %d %v, want %v %d", base, got, para, err, want, wantPara)
+		}
+		if &got[0] == &dst[0] || dst[0] != 7 {
+			t.Fatalf("base %d: full path wrote into dst", base)
+		}
+	}
+}

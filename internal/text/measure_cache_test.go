@@ -3,6 +3,9 @@ package text
 import (
 	"fmt"
 	"testing"
+
+	"github.com/go-text/typesetting/font"
+	ot "github.com/go-text/typesetting/font/opentype"
 )
 
 func TestMeasureCacheHitsKeysAndEviction(t *testing.T) {
@@ -57,7 +60,7 @@ func TestMeasureCacheHitsKeysAndEviction(t *testing.T) {
 	if n := len(e.cache.free); n != 5 {
 		t.Fatalf("free=%d, want 5", n)
 	}
-	serif := Request{Families: []string{"serif", "sans"}, Size: 16}
+	serif := Request{Families: []string{"serif", "sans"}, Size: 16, Variations: []font.Variation{{Tag: ot.MustNewTag("wght"), Value: 500}}}
 	l, err := e.Measure("recycled", serif, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +68,8 @@ func TestMeasureCacheHitsKeysAndEviction(t *testing.T) {
 	if n := len(e.cache.free); n != 4 {
 		t.Fatalf("put did not take a recycled entry: free=%d, want 4", n)
 	}
-	// The hit verifies the entry's family list was replaced, not kept stale.
+	// The hit verifies the entry's families and variations were replaced, not
+	// kept stale.
 	if hit, ok := e.cache.get("recycled", serif, 0); !ok || hit.Width != l.Width {
 		t.Fatalf("recycled entry missed: %+v %v", hit, ok)
 	}
