@@ -53,4 +53,34 @@ func TestAllocResolveLeftToRight(t *testing.T) {
 	if got := testing.AllocsPerRun(100, func() { _, _, _ = Resolve(text, Auto, breaks) }); got > 1 {
 		t.Fatalf("allocs = %v, want at most 1 (the result)", got)
 	}
+	dst := make([]uint8, 0, len(text))
+	if got := testing.AllocsPerRun(100, func() { dst, _, _ = ResolveInto(dst, text, Auto, breaks) }); got != 0 {
+		t.Fatalf("ResolveInto allocs = %v, want 0", got)
+	}
+	dst[0] = 7 // stale levels must be cleared on reuse
+	if levels, _, _ := ResolveInto(dst, text, Auto, breaks); levels[0] != 0 {
+		t.Fatalf("reused levels not cleared: %v", levels)
+	}
+}
+
+func TestResolveIntoFullPathIgnoresDst(t *testing.T) {
+	text := []rune("abc \u05d0\u05d1\u05d2 12")
+	breaks := []int{len(text)}
+	for _, base := range []BaseDirection{Auto, RTL} {
+		want, wantPara, err := Resolve(text, base, breaks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := make([]uint8, len(text))
+		for i := range dst {
+			dst[i] = 7
+		}
+		got, para, err := ResolveInto(dst, text, base, breaks)
+		if err != nil || para != wantPara || !slices.Equal(got, want) {
+			t.Fatalf("base %d: got %v %d %v, want %v %d", base, got, para, err, want, wantPara)
+		}
+		if &got[0] == &dst[0] || dst[0] != 7 {
+			t.Fatalf("base %d: full path wrote into dst", base)
+		}
+	}
 }

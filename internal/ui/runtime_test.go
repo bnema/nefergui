@@ -99,6 +99,89 @@ func TestWake(t *testing.T) {
 	}
 }
 
+// TestCommittedLayoutSurvivesNextBuild guards the layout arena rotation: the
+// view reads the committed layout while the next one is built, and a frame
+// that does not commit must leave it intact.
+func TestCommittedLayoutSurvivesNextBuild(t *testing.T) {
+	r := newRuntime()
+	view := func(label string) func(*Frame) {
+		return func(f *Frame) { f.Root().Box(Key(label), Inline("width:10px;height:10px;background:#fff")) }
+	}
+	// Warm both arenas: a fresh one allocates detached results, which would
+	// hide an overwrite.
+	for _, label := range []string{"w1", "w2", "a"} {
+		r.Redraw()
+		if !r.Build(view(label)) {
+			t.Fatalf("warm-up build %q skipped", label)
+		}
+	}
+	snapshot := func() (string, int) {
+		leaf := r.output.Tree
+		for len(leaf.Children) > 0 {
+			leaf = leaf.Children[0]
+		}
+		return leaf.ID, len(r.output.Display)
+	}
+	id, cmds := snapshot()
+	// Building the next frame must not write into the previous output, which
+	// the view, hit-testing and the renderer read until the commit.
+	prevTree, prevDisplay := r.output.Tree, r.output.Display
+	first := prevDisplay[0].ID
+	r.Redraw()
+	r.Build(view("b"))
+	leaf := prevTree
+	for len(leaf.Children) > 0 {
+		leaf = leaf.Children[0]
+	}
+	if leaf.ID != id || len(prevDisplay) != cmds || prevDisplay[0].ID != first {
+		t.Fatalf("next build overwrote the previous layout: leaf %q (want %q), %d commands (want %d), first %q (want %q)", leaf.ID, id, len(prevDisplay), cmds, prevDisplay[0].ID, first)
+	}
+	idB, _ := snapshot()
+	if idB == id {
+		t.Fatalf("second build not committed: %q", idB)
+	}
+	// A panicking view does not commit: the output stays readable and intact.
+	func() {
+		defer func() { _ = recover() }()
+		r.Redraw()
+		r.Build(func(f *Frame) { view("c")(f); panic("view failure") })
+	}()
+	if got, _ := snapshot(); got != idB {
+		t.Fatalf("panicked frame replaced the output: %q, want %q", got, idB)
+	}
+	// A failed layout writes into the free arena but commits nothing.
+	r.Redraw()
+	if r.Build(func(f *Frame) {
+		n := f.Root()
+		for range 300 { // deeper than layout allows
+			n = n.Box()
+		}
+	}) {
+		t.Fatal("too deep layout committed")
+	}
+	if got, _ := snapshot(); got != idB {
+		t.Fatalf("failed layout replaced the output: %q, want %q", got, idB)
+	}
+	// Rotation still alternates after both failures: each build keeps the
+	// previously committed layout intact.
+	for _, label := range []string{"d", "e"} {
+		prevTree, prevDisplay, before := r.output.Tree, r.output.Display, idB
+		first, cmds := prevDisplay[0].ID, len(prevDisplay)
+		r.Redraw()
+		if !r.Build(view(label)) {
+			t.Fatalf("build %q skipped", label)
+		}
+		leaf := prevTree
+		for len(leaf.Children) > 0 {
+			leaf = leaf.Children[0]
+		}
+		if leaf.ID != before || len(prevDisplay) != cmds || prevDisplay[0].ID != first {
+			t.Fatalf("build %q overwrote the previous layout: leaf %q (want %q), first command %q (want %q)", label, leaf.ID, before, prevDisplay[0].ID, first)
+		}
+		idB, _ = snapshot()
+	}
+}
+
 func TestConcurrentBuildDefersCommit(t *testing.T) {
 	r := newRuntime()
 	entered := make(chan struct{})

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"math"
+	"slices"
 
 	"github.com/bnema/nefergui/internal/css"
 	"github.com/bnema/nefergui/internal/layout"
@@ -152,5 +153,5 @@ func insertAt(out *layout.Output, at int, commands []layout.Command) {
 	if at < 0 || len(commands) == 0 {
 		return
 	}
-	out.Display = append(out.Display[:at], append(commands, out.Display[at:]...)...)
+	out.Display = slices.Insert(out.Display, at, commands...)
 }

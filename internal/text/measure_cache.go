@@ -37,6 +37,7 @@ type measureEntry struct {
 type measureCache struct {
 	entries map[measureKey]*measureEntry
 	frame   uint64
+	free    []*measureEntry // evicted entries, reused by put
 }
 
 func requestKey(s string, r Request, width float64) measureKey {
@@ -72,13 +73,26 @@ func (c *measureCache) put(s string, r Request, width float64, l Layout) {
 	if len(c.entries) >= maxMeasureEntries {
 		return
 	}
-	c.entries[requestKey(s, r, width)] = &measureEntry{families: slices.Clone(r.Families), variations: slices.Clone(r.Variations), layout: l, used: c.frame}
+	var e *measureEntry
+	if n := len(c.free); n > 0 {
+		e, c.free = c.free[n-1], c.free[:n-1]
+	} else {
+		e = new(measureEntry)
+	}
+	// Reuse the evicted entry's slices; Clone of an empty request stays nil.
+	e.families = append(e.families[:0], r.Families...)
+	e.variations = append(e.variations[:0], r.Variations...)
+	e.layout, e.used = l, c.frame
+	c.entries[requestKey(s, r, width)] = e
 }
 
 func (c *measureCache) endFrame() {
 	for k, e := range c.entries {
 		if c.frame-e.used >= 2 {
 			delete(c.entries, k)
+			// Callers may still hold e.layout; only the entry is recycled.
+			e.layout = Layout{}
+			c.free = append(c.free, e)
 		}
 	}
 	c.frame++

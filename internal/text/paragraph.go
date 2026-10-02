@@ -77,12 +77,6 @@ func (e *Engine) measureParagraphs(text []rune, paragraphs []paragraphRange, r R
 			}
 		}
 		result.Height += float64(len(part.Lines)) * part.LineHeight
-		if part.MinContent > result.MinContent {
-			result.MinContent = part.MinContent
-		}
-		if part.MaxContent > result.MaxContent {
-			result.MaxContent = part.MaxContent
-		}
 	}
 	return result, nil
 }

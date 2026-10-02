@@ -41,9 +41,9 @@ type Line struct {
 	Width, Baseline, Height float64
 }
 type Layout struct {
-	Lines                                                       []Line
-	Direction                                                   di.Direction // paragraph basis, auto resolved by bidi analysis
-	Width, Height, MinContent, MaxContent, Baseline, LineHeight float64
+	Lines                               []Line
+	Direction                           di.Direction // paragraph basis, auto resolved by bidi analysis
+	Width, Height, Baseline, LineHeight float64
 }
 
 // Engine is single-goroutine only: Measure and EndFrame are not synchronized.
@@ -54,7 +54,6 @@ type Engine struct {
 	seg     shaping.Segmenter
 	shaper  shaping.HarfbuzzShaper
 	wrapper shaping.LineWrapper
-	never   shaping.LineWrapper
 	cache   measureCache
 	scratch measureScratch
 }
@@ -62,15 +61,30 @@ type Engine struct {
 // measureScratch holds per-call buffers reused across measure calls. Nothing
 // in it may be referenced by a returned Layout.
 type measureScratch struct {
-	runes    []rune
-	faces    []*Face
-	reverse  map[*font.Face]*Face
-	faceFor  []*font.Face
-	items    []shaping.Input
-	levelled []shaping.Input
-	outs     []shaping.Output
-	runs     shaping.RunIterator
-	visual   visualScratch
+	runes     []rune
+	faces     []*Face
+	reverse   map[*font.Face]*Face
+	faceFor   []*font.Face
+	items     []shaping.Input
+	levelled  []shaping.Input
+	outs      []shaping.Output
+	runs      shaping.RunIterator
+	graphemes segmenter.Segmenter
+	missing   []rune  // lazy coverage: runes no named face covers
+	choices   []*Face // lazy coverage: faces selected for this measure
+	levels    []uint8
+	breaks    [1]int
+	visual    visualScratch
+}
+
+// fullBreak returns the single paragraph-end line break (nil for empty text),
+// backed by scratch storage.
+func (s *measureScratch) fullBreak(text []rune) []int {
+	if len(text) == 0 {
+		return nil
+	}
+	s.breaks[0] = len(text)
+	return s.breaks[:]
 }
 
 // iterate returns the reusable run iterator positioned at the start of outs.
@@ -92,9 +106,9 @@ func (m constantFace) ResolveFace(r rune) *font.Face { return m.face }
 // clusterFaces selects a single face for every UAX#29 extended grapheme. Format
 // characters (ZWJ and variation selectors) do not need outline coverage; they
 // remain in the cluster to let HarfBuzz apply substitutions.
-func clusterFaces(selected []*font.Face, text []rune, choices []*Face) []*font.Face {
+// seg is reused scratch storage.
+func clusterFaces(seg *segmenter.Segmenter, selected []*font.Face, text []rune, choices []*Face) []*font.Face {
 	selected = slices.Grow(selected[:0], len(text))[:len(text)]
-	var seg segmenter.Segmenter
 	seg.Init(text)
 	it := seg.GraphemeIterator()
 	for it.Next() {
@@ -173,11 +187,12 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 	if e.catalog.source != nil {
 		// Load named faces only as required for coverage. A failing face is
 		// excluded permanently and ranking is recomputed to admit its runner-up.
+		// The scratch segmenter is free here: clusterFaces re-inits it later.
 		named := choices
-		var seg segmenter.Segmenter
+		seg := &e.scratch.graphemes
 		seg.Init(text)
 		it := seg.GraphemeIterator()
-		var missing []rune
+		missing := e.scratch.missing[:0]
 		for it.Next() {
 			cluster := it.Grapheme().Text
 			covered := false
@@ -204,16 +219,16 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 		}
 		// Rebuild after failed loads. The fallback window excludes named
 		// families by key, so it never depends on load or failure state.
+		e.scratch.missing = missing
 		named = e.catalog.candidates(r)
-		window := e.catalog.fallbackWindow(missing, r)
-		choices = nil
+		choices = e.scratch.choices[:0]
 		for _, f := range named {
 			if f.Shape != nil && !f.bad {
 				choices = append(choices, f)
 			}
 		}
 		if len(missing) != 0 {
-			for _, f := range window {
+			for _, f := range e.catalog.fallbackWindow(missing, r) {
 				if !f.ready() {
 					continue
 				}
@@ -246,6 +261,7 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 				choices = append(choices, f)
 			}
 		}
+		e.scratch.choices = choices
 	}
 	if len(choices) == 0 {
 		return nil, nil, errors.New("no usable fonts")
@@ -265,7 +281,7 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 		sc.reverse[f.Shape] = f
 	}
 	sc.faces = faces
-	sc.faceFor = clusterFaces(sc.faceFor, text, faces)
+	sc.faceFor = clusterFaces(&sc.graphemes, sc.faceFor, text, faces)
 	input := shaping.Input{Text: text, RunEnd: len(text), Direction: direction, Size: fixed.Int26_6(math.Round(r.Size * 64))}
 	sc.items = splitFaces(sc.items, e.seg.Split(input, constantFace{face: faces[0].Shape}), sc.faceFor)
 	sc.levelled = splitLevels(sc.levelled, sc.items, levels)
@@ -281,7 +297,6 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 }
 
 // Measure shapes, wraps (UAX#14) and positions runs. Width <= 0 means unbounded.
-// MinContent is the largest unbreakable UAX#14 segment; max-content ignores soft breaks.
 // Every UAX#9 paragraph resolves its own direction; line baselines stack in logical px.
 //
 // Results are cached per (text, request, width) until EndFrame evicts them.
@@ -326,10 +341,11 @@ func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 	if r.Direction > bidi.RTL {
 		return result, errors.New("invalid paragraph direction")
 	}
-	paraLevels, baseLevel, err := bidi.Resolve(text, r.Direction, fullBreak(text))
+	paraLevels, baseLevel, err := bidi.ResolveInto(e.scratch.levels, text, r.Direction, e.scratch.fullBreak(text))
 	if err != nil {
 		return result, err
 	}
+	e.scratch.levels = paraLevels
 	direction := di.DirectionLTR
 	if baseLevel%2 == 1 {
 		direction = di.DirectionRTL
@@ -356,30 +372,6 @@ func (e *Engine) measure(s string, r Request, width float64) (Layout, error) {
 	result.LineHeight = height
 	if len(text) == 0 {
 		return result, nil
-	}
-	var minWidth float64
-	// Compute exact word widths even when a shaped run crosses a break opportunity.
-	// Wrapper's Never policy at zero width supplies min-content using its native glyph-cluster mapping.
-	words, _ := e.never.WrapParagraphF(shaping.WrapConfig{Direction: direction, BreakPolicy: shaping.Never, DisableTrailingWhitespaceTrim: true}, 1, text, e.scratch.iterate(outs))
-	for _, line := range words {
-		w := 0.0
-		for _, o := range line {
-			w += float64(o.Advance) / 64
-		}
-		if w > minWidth {
-			minWidth = w
-		}
-	}
-	result.MinContent = minWidth
-	maxLines, _ := e.wrapper.WrapParagraphF(shaping.WrapConfig{Direction: direction, DisableTrailingWhitespaceTrim: true}, fixed.Int26_6(1<<30), text, e.scratch.iterate(outs))
-	for _, line := range maxLines {
-		w := 0.0
-		for _, o := range line {
-			w += float64(o.Advance) / 64
-		}
-		if w > result.MaxContent {
-			result.MaxContent = w
-		}
 	}
 	limit := fixed.Int26_6(1 << 30)
 	if width > 0 {

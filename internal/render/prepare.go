@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"slices"
 
 	"github.com/bnema/nefergui/internal/css"
 	"github.com/bnema/nefergui/internal/layout"
@@ -103,19 +104,31 @@ func quadCapacity(commands []layout.Command) int {
 // Image commands without a source are rejected. Failed frames do not produce
 // partial output.
 func (p *Preparer) Prepare(commands []layout.Command, scale float64, width, height int) (Frame, error) {
+	// Frames are returned detached and may outlive later Prepare calls, so
+	// the backing array is never reused.
+	return p.PrepareInto(nil, commands, scale, width, height)
+}
+
+// PrepareInto is Prepare reusing quads' backing array for the returned frame's
+// Quads. The frame aliases quads, so it is valid only until quads is reused:
+// callers that keep frames must use Prepare. Pass the last frame's Quads
+// unchanged: its length tells how much of a past peak buffer is still needed.
+func (p *Preparer) PrepareInto(quads []Quad, commands []layout.Command, scale float64, width, height int) (Frame, error) {
 	if p == nil || p.Atlas == nil || scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) || width <= 0 || height <= 0 {
 		return Frame{}, fmt.Errorf("render: invalid frame dimensions, scale, or atlas")
 	}
 	p.Atlas.BeginFrame()
-	frame := Frame{}
-	if n := quadCapacity(commands); n > 0 {
-		// Frames are returned detached and may outlive later Prepare calls, so
-		// the backing array is never reused. Bound the initial reservation;
-		// larger visible frames grow through append after culling.
-		frame.Quads = make([]Quad, 0, n)
+	// Bound the initial reservation; larger visible frames grow through
+	// append after culling.
+	n := quadCapacity(commands)
+	if cap(quads) > bufferSlack*max(n, len(quads))+64 {
+		quads = nil // do not pin a past peak frame's buffer
 	}
+	clear(quads[:cap(quads)]) // drop image and glyph references from the last frame
+	frame := Frame{Quads: slices.Grow(quads[:0], n)}
 	clip := layout.Rect{W: float64(width), H: float64(height)}
-	stack := []layout.Rect{}
+	var stackBuf [8]layout.Rect // nested clips beyond this depth grow on the heap
+	stack := stackBuf[:0]
 	for _, cmd := range commands {
 		switch cmd.Op {
 		case "clip-push":

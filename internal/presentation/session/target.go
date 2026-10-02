@@ -78,6 +78,7 @@ type Target struct {
 	Slots    map[uint64]*Slot
 
 	list             render.ListBuffer
+	quads            []render.Quad // reused by submit; the instance upload copies them
 	pipeline         *vkdevice.Pipeline
 	pipelineGen      uint64 // pool generation the current pipeline belongs to
 	retiredPipelines []retiredPipelines
@@ -306,10 +307,11 @@ func (t *Target) Draw(display []layout.Command, scale float64, out *Output) (boo
 func (t *Target) Waiting() bool { return t.waiting }
 
 func (t *Target) submit(b *buffers.Buffer, slot *Slot, display []layout.Command, scale float64, out *Output) (bool, error) {
-	frame, err := t.Preparer.Prepare(display, scale, int(t.width), int(t.height))
+	frame, err := t.Preparer.PrepareInto(t.quads, display, scale, int(t.width), int(t.height))
 	if err != nil {
 		return false, err
 	}
+	t.quads = frame.Quads
 	defer t.list.Release()
 	instances, batches, stats := t.list.List(frame)
 	if len(stats.Skipped) != 0 {

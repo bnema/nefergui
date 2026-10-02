@@ -40,7 +40,7 @@ func TestScriptsAndMetrics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(l.Lines) == 0 || l.Width <= 0 || l.Height <= 0 || l.MinContent > l.MaxContent+1 {
+			if len(l.Lines) == 0 || l.Width <= 0 || l.Height <= 0 {
 				t.Fatalf("bad metrics: %+v", l)
 			}
 			found, rtl, missing := false, false, false
@@ -90,10 +90,11 @@ func TestScriptsAndMetrics(t *testing.T) {
 	}
 	wide, _ := e.Measure("one two three four five", r, 220)
 	narrow, _ := e.Measure("one two three four five", r, 60)
-	if narrow.Height < wide.Height || narrow.MinContent != wide.MinContent || wide.MaxContent != narrow.MaxContent {
+	if narrow.Height < wide.Height || len(narrow.Lines) <= len(wide.Lines) {
 		t.Errorf("wrap monotonicity: %+v %+v", narrow, wide)
 	}
 }
+
 func TestCorruptAndMatching(t *testing.T) {
 	if _, err := Load(sourceMap{"broken.ttf": []byte("not a font")}); err == nil {
 		t.Fatal("accepted corrupt font")
@@ -451,21 +452,36 @@ func BenchmarkMeasureMissShort(b *testing.B) {
 // allocBaselineMeasureMiss is the measured allocation count of an uncached
 // short label; most of the remainder is inside go-text segmentation and
 // wrapping. Lower it with each optimization.
-const allocBaselineMeasureMiss = 33
+const allocBaselineMeasureMiss = 20
 
+// TestAllocMeasureMissShort covers both catalog kinds: an eager directory
+// catalog and a lazy indexed one, like the system catalog the renderer uses,
+// which runs the on-demand coverage pass.
 func TestAllocMeasureMissShort(t *testing.T) {
 	if raceEnabled {
 		t.Skip("race instrumentation changes allocation counts")
 	}
-	e := NewEngine(fixture(t))
-	r := Request{Families: []string{"Noto Sans"}, Size: 16}
-	measure := func() {
-		if _, err := e.measure("Value: 42", r, 0); err != nil {
-			t.Fatal(err)
-		}
+	b, err := os.ReadFile("../../testdata/fonts/NotoSans-Regular.ttf")
+	if err != nil {
+		t.Fatal(err)
 	}
-	measure() // load fonts and fill scratch buffers
-	if got := testing.AllocsPerRun(50, measure); got > allocBaselineMeasureMiss {
-		t.Fatalf("allocs per uncached measure = %v, baseline %v", got, allocBaselineMeasureMiss)
+	lazy, err := Load(&countingSource{entries: []FontFile{{Path: "noto", Family: "Noto Sans", Aspect: font.Aspect{Weight: 400, Stretch: 1}}}, data: map[string][]byte{"noto": b}, reads: map[string]int{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, catalog := range map[string]*Catalog{"directory": fixture(t), "indexed": lazy} {
+		t.Run(name, func(t *testing.T) {
+			e := NewEngine(catalog)
+			r := Request{Families: []string{"Noto Sans"}, Size: 16}
+			measure := func() {
+				if _, err := e.measure("Value: 42", r, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			measure() // load fonts and fill scratch buffers
+			if got := testing.AllocsPerRun(50, measure); got > allocBaselineMeasureMiss {
+				t.Fatalf("allocs per uncached measure = %v, baseline %v", got, allocBaselineMeasureMiss)
+			}
+		})
 	}
 }

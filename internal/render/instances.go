@@ -42,7 +42,8 @@ type ListBuffer struct {
 }
 
 // bufferSlack is how much larger than needed retained storage may be before
-// List drops it, so one huge frame does not pin memory forever.
+// List drops it, so one huge frame does not pin memory forever. It matches
+// layout's retainSlack.
 const bufferSlack = 4
 
 // List is ListBatches reusing this buffer's storage where capacity allows.

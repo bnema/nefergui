@@ -6,6 +6,7 @@ import (
 	"errors"
 	"image"
 	"math"
+	"slices"
 
 	"github.com/bnema/nefergui/internal/css"
 	"github.com/bnema/nefergui/internal/text"
@@ -165,9 +166,38 @@ type Output struct {
 }
 
 // Options provide logical viewport size and an optional text shaping engine.
+// Arena, when set, supplies reusable storage for the Output.
 type Options struct {
 	Width, Height float64
 	TextEngine    *text.Engine
+	Arena         *Arena
+}
+
+// Arena holds the result tree and display storage of one Output, so a steady
+// layout reuses it instead of allocating. An Output stays valid until its
+// arena is passed to Layout again; alternate two arenas to keep the previous
+// Output readable while building the next.
+type Arena struct {
+	results  slab[Result]
+	children slab[*Result]
+	commands []Command
+	kept     int // length of the last list passed to Keep, until the next Keep
+	// Flex scratch: valid during one Layout call only.
+	flexItems slab[flexItem]
+	flexEnds  slab[int]
+	shadows   slab[css.Shadow]
+	runs      slab[Run]
+	glyphs    slab[Glyph]
+}
+
+// Keep makes display, the Output.Display of the arena's last Layout after the
+// caller appended to it, the list the arena recycles next. Without it, a list
+// that outgrew its arena block is reallocated by the caller every frame.
+func (a *Arena) Keep(display []Command) {
+	if cap(display) > cap(a.commands) {
+		a.commands = display[:0]
+	}
+	a.kept = len(display)
 }
 
 var ErrDepth = errors.New("layout: tree depth exceeds 256")
@@ -177,7 +207,7 @@ func Layout(root *Node, options Options) (Output, error) {
 	if root == nil {
 		return Output{}, nil
 	}
-	ctx := context{options: options}
+	ctx := newContext(options)
 	viewport := Rect{0, 0, safe(options.Width), safe(options.Height)}
 	tree, err := ctx.place(root, viewport.X, viewport.Y, viewport.W, viewport.H, nil, nil, 0)
 	if err != nil {
@@ -191,21 +221,44 @@ func Layout(root *Node, options Options) (Output, error) {
 // display paints the placed tree into a list sized once from the tree.
 func (c context) display(root *Node, tree *Result) []Command {
 	n := countCommands(root, tree)
+	a := c.arena
+	// Size by what the list held last time, so caller decorations do not make
+	// a kept list look oversized and get dropped every frame.
+	need := max(n.commands, a.kept)
+	if oversized(cap(a.commands), need) {
+		a.commands = nil // do not pin one huge frame's list
+	} else {
+		clear(a.commands[:cap(a.commands)]) // callers may have appended in place
+	}
+	a.shadows.reset(n.shadows)
+	a.runs.reset(n.runs)
+	a.glyphs.reset(n.glyphs)
 	if n.commands == 0 {
 		return nil
 	}
-	out := make([]Command, 0, n.commands)
-	c.shadows, c.runs, c.glyphs = newSlab[css.Shadow](n.shadows), newSlab[Run](n.runs), newSlab[Glyph](n.glyphs)
+	out := slices.Grow(a.commands[:0], n.commands)
 	c.paint(root, tree, &out)
+	a.commands = out
 	return out
 }
 
 type context struct {
 	options Options
-	// Painter-owned display storage, sized by countCommands; nil is valid.
-	shadows *slab[css.Shadow]
-	runs    *slab[Run]
-	glyphs  *slab[Glyph]
+	arena   *Arena // storage for results and display; never nil
+}
+
+// newContext recycles options.Arena, or uses a fresh one.
+func newContext(options Options) context {
+	arena := options.Arena
+	if arena == nil {
+		arena = new(Arena)
+	}
+	// The tree size is only known after placing it: size by the last demand.
+	arena.results.reset(arena.results.need)
+	arena.children.reset(arena.children.need)
+	arena.flexItems.reset(arena.flexItems.need)
+	arena.flexEnds.reset(arena.flexEnds.need)
+	return context{options: options, arena: arena}
 }
 
 func style(n *Node) css.Style {
@@ -481,7 +534,7 @@ func (c context) place(n *Node, x, y, availableW, availableH float64, forcedW, f
 	if !explicitH {
 		h = boxBound(h, s.MinHeight, s.MaxHeight, availableH, insetH, borderBox)
 	}
-	r := &Result{ID: n.ID, Kind: n.Kind, Border: Rect{coord(x + margin.Left), coord(y + margin.Top), w, h}, Margin: margin, Padding: padding, BorderWidths: border, Lines: lines}
+	r := c.arena.results.one(Result{ID: n.ID, Kind: n.Kind, Border: Rect{coord(x + margin.Left), coord(y + margin.Top), w, h}, Margin: margin, Padding: padding, BorderWidths: border, Lines: lines})
 	r.Content = Rect{coord(r.Border.X + border.Left + padding.Left), coord(r.Border.Y + border.Top + padding.Top), contentW, safe(h - insetH)}
 	r.ContentSize = Size{measured.W, measured.H}
 	// Block and stack auto heights depend on their children's envelopes.
@@ -580,7 +633,7 @@ func (c context) children(n *Node, r *Result, s css.Style, depth int) error {
 		if absolute {
 			cw, chh = safe(ch.Rect.X+ch.Rect.W), safe(ch.Rect.Y+ch.Rect.H)
 		}
-		r.Children = appendChild(r.Children, child, len(n.Children))
+		r.Children = c.appendChild(r.Children, child, len(n.Children))
 		r.ContentSize.W = math.Max(r.ContentSize.W, cw)
 		if n.Kind == Stack {
 			r.ContentSize.H = math.Max(r.ContentSize.H, chh)
@@ -592,11 +645,11 @@ func (c context) children(n *Node, r *Result, s css.Style, depth int) error {
 	return nil
 }
 
-// appendChild appends child, sizing the first allocation for the n input
-// children so a node's result children cost one allocation, not a growth chain.
-func appendChild(children []*Result, child *Result, n int) []*Result {
+// appendChild appends child, taking room for the n input children from the
+// arena on the first call so a node's children never regrow.
+func (c context) appendChild(children []*Result, child *Result, n int) []*Result {
 	if children == nil {
-		children = make([]*Result, 0, n)
+		children = c.arena.children.take(n)
 	}
 	return append(children, child)
 }
@@ -735,7 +788,7 @@ func (c context) flex(n *Node, r *Result, s css.Style, depth int) error {
 		mainSize, crossSize = crossSize, mainSize
 		gap, crossGap = crossGap, gap
 	}
-	items := make([]flexItem, 0, len(n.Children))
+	items := c.arena.flexItems.take(len(n.Children))
 	for _, ch := range n.Children {
 		if ch == nil || style(ch).Display == css.KeywordNone {
 			continue
@@ -800,33 +853,34 @@ func (c context) flex(n *Node, r *Result, s css.Style, depth int) error {
 		it.cross = boxBound(it.cross, minCross, maxCross, crossSize, inCross, st.BoxSizing == css.KeywordBorderBox)
 		items = append(items, it)
 	}
-	lines := [][]flexItem{}
-	line := []flexItem{}
-	used := 0.0
-	for _, item := range items {
+	// Each line is a run of consecutive items; ends holds each line's end index.
+	ends := c.arena.flexEnds.take(len(items))
+	start, used := 0, 0.0
+	for i, item := range items {
 		need := item.base + item.marginMain
-		if len(line) > 0 {
+		if i > start {
 			need += gap
 		}
-		if s.FlexWrap == css.KeywordWrap && len(line) > 0 && used+need > mainSize {
-			lines = append(lines, line)
-			line = nil
-			used = 0
+		if s.FlexWrap == css.KeywordWrap && i > start && used+need > mainSize {
+			ends = append(ends, i)
+			start, used = i, 0
 			need = item.base + item.marginMain
 		}
-		line = append(line, item)
 		used += need
 	}
-	if len(line) > 0 {
-		lines = append(lines, line)
+	if len(items) > start {
+		ends = append(ends, len(items))
 	}
 	crossPos := 0.0
-	for _, line := range lines {
+	lineStart := 0
+	for _, end := range ends {
+		line := items[lineStart:end:end]
+		lineStart = end
 		lineCross := 0.0
 		for _, it := range line {
 			lineCross = math.Max(lineCross, it.cross+it.marginCross)
 		}
-		if len(lines) == 1 && crossSize > 0 && (row && s.Height.Unit != "auto" && s.Height.Unit != "" || !row && s.Width.Unit != "auto" && s.Width.Unit != "") {
+		if len(ends) == 1 && crossSize > 0 && (row && s.Height.Unit != "auto" && s.Height.Unit != "" || !row && s.Width.Unit != "auto" && s.Width.Unit != "") {
 			lineCross = math.Max(lineCross, crossSize)
 		}
 		resolveFlex(line, mainSize-gap*float64(len(line)-1))
@@ -889,7 +943,7 @@ func (c context) flex(n *Node, r *Result, s css.Style, depth int) error {
 				return err
 			}
 			if child != nil {
-				r.Children = appendChild(r.Children, child, len(n.Children))
+				r.Children = c.appendChild(r.Children, child, len(n.Children))
 				cw, ch := envelope(child)
 				r.ContentSize.W = math.Max(r.ContentSize.W, child.Border.X-r.Content.X+cw)
 				r.ContentSize.H = math.Max(r.ContentSize.H, child.Border.Y-r.Content.Y+ch)
@@ -901,24 +955,43 @@ func (c context) flex(n *Node, r *Result, s css.Style, depth int) error {
 	return nil
 }
 
-// slab hands out detached values or sub-slices from one exactly sized block,
-// so a display list costs a few allocations rather than one per shadow, run or
-// text command. Blocks are never resized or reused, so pointers and slices
-// stay valid for the life of the returned Output. Sub-slices have their
+// slab hands out values or sub-slices from one block, so an Output costs no
+// allocation per node, shadow, run or text command once the block is large
+// enough. The block is reused by reset: pointers and slices from it are valid
+// until the owning Arena is passed to Layout again. Sub-slices have their
 // capacity clipped, so a caller's append cannot overwrite a neighbour. A
-// miscount, or a nil slab, only falls back to individual allocations.
-type slab[T any] struct{ block []T }
+// miscount only falls back to individual allocations, and need grows so the
+// next reset fits.
+type slab[T any] struct {
+	block []T
+	need  int // demand since the last reset, including fallbacks
+}
 
-func newSlab[T any](n int) *slab[T] {
-	if n <= 0 {
-		return nil
+// retainSlack is how much larger than needed retained storage may be before
+// it is dropped, so one huge frame does not pin its memory. render uses the
+// same rule for its quad and instance buffers.
+const retainSlack = 4
+
+// oversized reports that storage of the given capacity holds far more than
+// need and should be dropped rather than reused.
+func oversized(capacity, need int) bool { return capacity > retainSlack*need+64 }
+
+// reset recycles the block for n elements, zeroing the previous contents so
+// they do not keep text, faces or images alive.
+func (a *slab[T]) reset(n int) {
+	clear(a.block)
+	a.need = 0
+	if cap(a.block) < n || oversized(cap(a.block), n) {
+		a.block = make([]T, 0, n)
+		return
 	}
-	return &slab[T]{block: make([]T, 0, n)}
+	a.block = a.block[:0]
 }
 
 // one stores v in the slab and returns its address.
 func (a *slab[T]) one(v T) *T {
-	if a == nil || len(a.block) == cap(a.block) {
+	a.need++
+	if len(a.block) == cap(a.block) {
 		p := new(T) // copy, so v itself never escapes
 		*p = v
 		return p
@@ -932,7 +1005,8 @@ func (a *slab[T]) take(n int) []T {
 	if n <= 0 {
 		return nil
 	}
-	if a == nil || cap(a.block)-len(a.block) < n {
+	a.need += n
+	if cap(a.block)-len(a.block) < n {
 		return make([]T, 0, n)
 	}
 	i := len(a.block)
@@ -1020,7 +1094,7 @@ func (c context) paint(n *Node, r *Result, out *[]Command) {
 		}
 		cmd := base
 		cmd.Op = "shadow"
-		cmd.Shadow = c.shadows.one(s.BoxShadow[i])
+		cmd.Shadow = c.arena.shadows.one(s.BoxShadow[i])
 		cmd.Radii = borderRadii
 		*out = append(*out, cmd)
 	}
@@ -1046,7 +1120,7 @@ func (c context) paint(n *Node, r *Result, out *[]Command) {
 		}
 		cmd := base
 		cmd.Op = "shadow"
-		cmd.Shadow = c.shadows.one(s.BoxShadow[i])
+		cmd.Shadow = c.arena.shadows.one(s.BoxShadow[i])
 		cmd.Radii = borderRadii
 		*out = append(*out, cmd)
 	}
@@ -1082,8 +1156,8 @@ func (c context) paint(n *Node, r *Result, out *[]Command) {
 		cmd.Text = n.Content
 		cmd.Color = s.Color
 		runs, glyphs := textCounts(r)
-		cmd.Runs = c.runs.take(runs)
-		backing := c.glyphs.take(glyphs)
+		cmd.Runs = c.arena.runs.take(runs)
+		backing := c.arena.glyphs.take(glyphs)
 		for _, line := range r.Lines {
 			offset := AlignOffset(s.TextAlign, line.Direction, r.Content.W, line.Width)
 			for _, run := range line.Runs {
