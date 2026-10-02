@@ -196,6 +196,16 @@ func TestLayoutArenaReuse(t *testing.T) {
 	if n := testing.AllocsPerRun(20, decorate); n != 0 {
 		t.Fatalf("decorated layout allocs=%v, want 0", n)
 	}
+	// The runtime may lay out twice before one Keep (caret scrolling).
+	if n := testing.AllocsPerRun(20, func() { layout(1); decorate() }); n != 0 {
+		t.Fatalf("relayout before keep allocs=%v, want 0", n)
+	}
+	// Once decorations go away, the large list is released.
+	decorated := cap(arenas[1].commands)
+	arenas[1].Keep(layout(1).Display)
+	if layout(1); cap(arenas[1].commands) >= decorated {
+		t.Fatalf("decorated list kept after decorations went away: cap %d", cap(arenas[1].commands))
+	}
 	// Growth falls back to individual allocations once, then fits.
 	for range 30 {
 		root.Children = append(root.Children, root.Children[0])

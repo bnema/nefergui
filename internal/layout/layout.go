@@ -181,7 +181,7 @@ type Arena struct {
 	results  slab[Result]
 	children slab[*Result]
 	commands []Command
-	kept     int // length of the last list passed to Keep, decorations included
+	kept     int // length of the last list passed to Keep, until the next Keep
 	// Flex scratch: valid during one Layout call only.
 	flexItems slab[flexItem]
 	flexEnds  slab[int]
@@ -225,7 +225,6 @@ func (c context) display(root *Node, tree *Result) []Command {
 	// Size by what the list held last time, so caller decorations do not make
 	// a kept list look oversized and get dropped every frame.
 	need := max(n.commands, a.kept)
-	a.kept = 0
 	if oversized(cap(a.commands), need) {
 		a.commands = nil // do not pin one huge frame's list
 	} else {
