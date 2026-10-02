@@ -220,7 +220,7 @@ func Layout(root *Node, options Options) (Output, error) {
 func (c context) display(root *Node, tree *Result) []Command {
 	n := countCommands(root, tree)
 	a := c.arena
-	if cap(a.commands) > max(n.commands, maxSlabKeep) {
+	if oversized(cap(a.commands), n.commands) {
 		a.commands = nil // do not pin one huge frame's list
 	} else {
 		clear(a.commands[:cap(a.commands)]) // callers may have appended in place
@@ -962,16 +962,21 @@ type slab[T any] struct {
 	need  int // demand since the last reset, including fallbacks
 }
 
-// maxSlabKeep bounds the elements a slab keeps across resets, so one huge
-// frame does not pin its memory.
-const maxSlabKeep = 1 << 16
+// retainSlack is how much larger than needed retained storage may be before
+// it is dropped, so one huge frame does not pin its memory. render uses the
+// same rule for its quad and instance buffers.
+const retainSlack = 4
+
+// oversized reports that storage of the given capacity holds far more than
+// need and should be dropped rather than reused.
+func oversized(capacity, need int) bool { return capacity > retainSlack*need+64 }
 
 // reset recycles the block for n elements, zeroing the previous contents so
 // they do not keep text, faces or images alive.
 func (a *slab[T]) reset(n int) {
 	clear(a.block)
 	a.need = 0
-	if cap(a.block) < n || cap(a.block) > max(n, maxSlabKeep) {
+	if cap(a.block) < n || oversized(cap(a.block), n) {
 		a.block = make([]T, 0, n)
 		return
 	}

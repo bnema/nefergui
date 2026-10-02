@@ -107,8 +107,13 @@ func TestCommittedLayoutSurvivesNextBuild(t *testing.T) {
 	view := func(label string) func(*Frame) {
 		return func(f *Frame) { f.Root().Box(Key(label), Inline("width:10px;height:10px;background:#fff")) }
 	}
-	if !r.Build(view("a")) {
-		t.Fatal("first build skipped")
+	// Warm both arenas: a fresh one allocates detached results, which would
+	// hide an overwrite.
+	for _, label := range []string{"w1", "w2", "a"} {
+		r.Redraw()
+		if !r.Build(view(label)) {
+			t.Fatalf("warm-up build %q skipped", label)
+		}
 	}
 	snapshot := func() (string, int) {
 		leaf := r.output.Tree
@@ -160,7 +165,8 @@ func TestCommittedLayoutSurvivesNextBuild(t *testing.T) {
 	// Rotation still alternates after both failures: each build keeps the
 	// previously committed layout intact.
 	for _, label := range []string{"d", "e"} {
-		prevTree, before := r.output.Tree, idB
+		prevTree, prevDisplay, before := r.output.Tree, r.output.Display, idB
+		first, cmds := prevDisplay[0].ID, len(prevDisplay)
 		r.Redraw()
 		if !r.Build(view(label)) {
 			t.Fatalf("build %q skipped", label)
@@ -169,8 +175,8 @@ func TestCommittedLayoutSurvivesNextBuild(t *testing.T) {
 		for len(leaf.Children) > 0 {
 			leaf = leaf.Children[0]
 		}
-		if leaf.ID != before {
-			t.Fatalf("build %q overwrote the previous layout: %q, want %q", label, leaf.ID, before)
+		if leaf.ID != before || len(prevDisplay) != cmds || prevDisplay[0].ID != first {
+			t.Fatalf("build %q overwrote the previous layout: leaf %q (want %q), first command %q (want %q)", label, leaf.ID, before, prevDisplay[0].ID, first)
 		}
 		idB, _ = snapshot()
 	}

@@ -3,6 +3,7 @@ package layout
 import (
 	"image"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/bnema/nefergui/internal/css"
@@ -129,7 +130,8 @@ func TestPaintCountsMatch(t *testing.T) {
 			shadows++
 		}
 	}
-	if n.commands != len(out) || n.runs != runs || n.glyphs != glyphs || n.shadows != shadows {
+	// A fresh arena sizes the list once from the count; growth would change cap.
+	if n.commands != len(out) || cap(out) != cap(slices.Grow([]Command(nil), n.commands)) || n.runs != runs || n.glyphs != glyphs || n.shadows != shadows {
 		t.Fatalf("counts %+v vs commands=%d cap=%d runs=%d glyphs=%d shadows=%d", n, len(out), cap(out), runs, glyphs, shadows)
 	}
 }
