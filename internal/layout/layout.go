@@ -181,6 +181,7 @@ type Arena struct {
 	results  slab[Result]
 	children slab[*Result]
 	commands []Command
+	kept     int // length of the last list passed to Keep, decorations included
 	// Flex scratch: valid during one Layout call only.
 	flexItems slab[flexItem]
 	flexEnds  slab[int]
@@ -196,6 +197,7 @@ func (a *Arena) Keep(display []Command) {
 	if cap(display) > cap(a.commands) {
 		a.commands = display[:0]
 	}
+	a.kept = len(display)
 }
 
 var ErrDepth = errors.New("layout: tree depth exceeds 256")
@@ -220,7 +222,11 @@ func Layout(root *Node, options Options) (Output, error) {
 func (c context) display(root *Node, tree *Result) []Command {
 	n := countCommands(root, tree)
 	a := c.arena
-	if oversized(cap(a.commands), n.commands) {
+	// Size by what the list held last time, so caller decorations do not make
+	// a kept list look oversized and get dropped every frame.
+	need := max(n.commands, a.kept)
+	a.kept = 0
+	if oversized(cap(a.commands), need) {
 		a.commands = nil // do not pin one huge frame's list
 	} else {
 		clear(a.commands[:cap(a.commands)]) // callers may have appended in place

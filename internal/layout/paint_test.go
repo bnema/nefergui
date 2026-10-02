@@ -130,9 +130,19 @@ func TestPaintCountsMatch(t *testing.T) {
 			shadows++
 		}
 	}
-	// A fresh arena sizes the list once from the count; growth would change cap.
-	if n.commands != len(out) || cap(out) != cap(slices.Grow([]Command(nil), n.commands)) || n.runs != runs || n.glyphs != glyphs || n.shadows != shadows {
-		t.Fatalf("counts %+v vs commands=%d cap=%d runs=%d glyphs=%d shadows=%d", n, len(out), cap(out), runs, glyphs, shadows)
+	if n.commands != len(out) || n.runs != runs || n.glyphs != glyphs || n.shadows != shadows {
+		t.Fatalf("counts %+v vs commands=%d runs=%d glyphs=%d shadows=%d", n, len(out), runs, glyphs, shadows)
+	}
+	// An empty arena sizes each block once from the counts: one allocation
+	// each for commands, shadows, runs and glyphs, with no growth.
+	if raceEnabled {
+		return
+	}
+	if got := testing.AllocsPerRun(10, func() {
+		*ctx.arena = Arena{}
+		ctx.display(root, tree)
+	}); got != 4 {
+		t.Fatalf("fresh display allocs=%v, want 4", got)
 	}
 }
 
@@ -174,6 +184,17 @@ func TestLayoutArenaReuse(t *testing.T) {
 	}
 	if n := testing.AllocsPerRun(20, func() { layout(1) }); n != 0 {
 		t.Fatalf("steady layout allocs=%v, want 0", n)
+	}
+	// A list the caller grew with many decorations and handed back through
+	// Keep is recycled, not dropped as oversized for the layout alone.
+	decorations := make([]Command, 1000) // far beyond retainSlack times the layout's own
+	decorate := func() {
+		out := layout(1)
+		arenas[1].Keep(slices.Insert(out.Display, 0, decorations...))
+	}
+	decorate()
+	if n := testing.AllocsPerRun(20, decorate); n != 0 {
+		t.Fatalf("decorated layout allocs=%v, want 0", n)
 	}
 	// Growth falls back to individual allocations once, then fits.
 	for range 30 {
