@@ -41,6 +41,14 @@ r.Released(buffer) // when out.ReleaseFD becomes readable
 
 `RendererConfig.Styles` loads your own CSS; default styles work without it. See `ExampleRenderer` and [runtime](docs/runtime.md) for the full contract.
 
+## Demo
+
+[`examples/demo`](examples/demo) is a document workspace (toolbar, document list, text editor, properties pane, light and dark themes) in a Wayland window, using neferclient as the client. It lives in its own module, so NeferGUI does not depend on neferclient, and it always builds against the NeferGUI code in this checkout:
+
+```sh
+cd examples && go run ./demo
+```
+
 ## Requirements
 
 Go 1.27, `libvulkan.so.1` and usable fonts. The GPU must export DMA-BUF and support DRM syncobj timelines (kernel 6.6 or later for eventfd waits). The compositor, reached through your Wayland client, must offer linux-dmabuf and linux-drm-syncobj; fractional scaling also needs viewporter. No X11 or software-rendering fallback.
