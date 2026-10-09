@@ -221,8 +221,12 @@ func Layout(root *Node, options Options) (Output, error) {
 // Natural returns the border-box size root takes when it is not stretched: the
 // widest and tallest envelope of its content plus its padding and border,
 // honoring explicit width, height, min and max like Layout. Text wraps at
-// options.Width, so the width never exceeds it unless an explicit width says
-// so. options.Height is unused. Margins are not part of the result.
+// options.Width minus the root margins, but the width may still exceed
+// options.Width when content cannot wrap (a long word, an unwrapped text, an
+// explicit width): callers clamp. The root's own margins are not part of the
+// result. Percentage height, min-height and max-height of root are treated as
+// auto, as for nested nodes (CSS: the containing height is indefinite), so
+// options.Height has no effect.
 func Natural(root *Node, options Options) (Size, error) {
 	if root == nil {
 		return Size{}, nil
@@ -235,6 +239,7 @@ func Natural(root *Node, options Options) (Size, error) {
 	if err := validateStackRects(root, s); err != nil {
 		return Size{}, err
 	}
+	s = IndefiniteHeights(s)
 	availableW, availableH := safe(options.Width), safe(options.Height)
 	margin := edges(s.Margin, availableW)
 	padding := nonnegative(edges(s.Padding, availableW))
@@ -287,6 +292,22 @@ func Natural(root *Node, options Options) (Size, error) {
 		h = boxBound(measured.H+insetH, s.MinHeight, s.MaxHeight, availableH, insetH, borderBox)
 	}
 	return Size{safe(math.Max(w, insetW)), safe(math.Max(h, insetH))}, nil
+}
+
+// IndefiniteHeights returns s with percentage height, min-height and max-height
+// replaced by auto (no constraint), for a root whose containing height is not
+// known, such as a surface that does not exist yet.
+func IndefiniteHeights(s css.Style) css.Style {
+	if s.Height.Unit == "%" {
+		s.Height = css.Length{Unit: "auto"}
+	}
+	if s.MinHeight.Unit == "%" {
+		s.MinHeight = css.Length{}
+	}
+	if s.MaxHeight.Unit == "%" {
+		s.MaxHeight = css.Length{}
+	}
+	return s
 }
 
 // display paints the placed tree into a list sized once from the tree.
