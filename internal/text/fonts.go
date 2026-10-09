@@ -230,7 +230,7 @@ func (SystemSource) IndexFiles(paths []string) ([]FontFile, error) {
 			defer wg.Done()
 			var buffer []byte
 			for i := range next {
-				files[i], buffer, errs[i] = indexFile(paths[i], buffer)
+				files[i], buffer, errs[i] = safeIndexFile(paths[i], buffer)
 			}
 		}()
 	}
@@ -240,6 +240,17 @@ func (SystemSource) IndexFiles(paths []string) ([]FontFile, error) {
 	close(next)
 	wg.Wait()
 	return slices.Concat(files...), errors.Join(errs...)
+}
+
+// safeIndexFile is indexFile on a worker goroutine: a parser panic on a
+// corrupt font becomes that file's error instead of ending the process.
+func safeIndexFile(p string, buffer []byte) (files []FontFile, _ []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			files, buffer, err = nil, nil, fmt.Errorf("font %s: parser panic: %v", p, r)
+		}
+	}()
+	return indexFile(p, buffer)
 }
 
 // indexFile reads the metadata of every face in the file at p. buffer is
@@ -381,12 +392,44 @@ func fileStem(path string) string {
 	return font.NormalizeFamily(name)
 }
 
-// indexStems indexes the files whose stem is one of keys.
+// styleWords may follow a family name inside a file-name stem, as in
+// DejaVuSansCondensed.ttf, whose family is "DejaVu Sans".
+var styleWords = []string{"ultracondensed", "extracondensed", "semicondensed", "condensed", "semiexpanded", "extraexpanded", "ultraexpanded", "expanded", "narrow", "wide",
+	"hairline", "thin", "extralight", "ultralight", "light", "book", "regular", "normal", "medium", "semibold", "demibold", "bold", "extrabold", "ultrabold", "heavy", "black",
+	"italic", "oblique"}
+
+// stemMatches reports whether a file stem names family key: the key itself,
+// or the key followed only by style words.
+func stemMatches(stem, key string) bool {
+	rest, ok := strings.CutPrefix(stem, key)
+	if !ok {
+		return false
+	}
+	for rest != "" {
+		word := ""
+		for _, w := range styleWords {
+			if strings.HasPrefix(rest, w) {
+				word = w
+				break
+			}
+		}
+		if word == "" {
+			return false
+		}
+		rest = rest[len(word):]
+	}
+	return true
+}
+
+// indexStems indexes the files whose stem names one of keys.
 func (c *Catalog) indexStems(keys []string) {
 	var todo []int
-	for _, key := range keys {
-		for _, i := range c.byStem[key] {
-			if !c.indexed[i] && !slices.Contains(todo, i) {
+	for stem, positions := range c.byStem {
+		if !slices.ContainsFunc(keys, func(key string) bool { return stemMatches(stem, key) }) {
+			continue
+		}
+		for _, i := range positions {
+			if !c.indexed[i] {
 				todo = append(todo, i)
 			}
 		}
@@ -394,10 +437,11 @@ func (c *Catalog) indexStems(keys []string) {
 	c.indexPositions(todo)
 }
 
-// indexAll indexes every remaining file, once.
-func (c *Catalog) indexAll() {
-	if c.complete {
-		return
+// indexAll indexes every remaining file of a lazy catalog, once. It reports
+// whether it indexed anything.
+func (c *Catalog) indexAll() bool {
+	if c.lazy == nil || c.complete {
+		return false
 	}
 	var todo []int
 	for i, done := range c.indexed {
@@ -407,6 +451,7 @@ func (c *Catalog) indexAll() {
 	}
 	c.indexPositions(todo)
 	c.complete = true
+	return true
 }
 
 // indexPositions indexes the files at the given path positions and rebuilds
@@ -433,6 +478,7 @@ func (c *Catalog) indexPositions(todo []int) {
 	for _, entry := range entries {
 		i, ok := position[entry.Path]
 		if !ok {
+			c.Diagnostics = append(c.Diagnostics, fmt.Errorf("font index entry for unrequested path %s", entry.Path))
 			continue
 		}
 		c.faceAt[i] = append(c.faceAt[i], c.newFace(entry))
@@ -851,10 +897,7 @@ func namedKeys(r Request) map[string]bool {
 // unknown range data remain eligible; loaded or failed state never moves the
 // window, so later measures cannot admit a different face.
 func (c *Catalog) fallbackWindow(text []rune, r Request) []*Face {
-	if c.lazy != nil {
-		// Any installed face may cover a missing glyph.
-		c.indexAll()
-	}
+	c.indexAll() // any installed face may cover a missing glyph
 	named := namedKeys(r)
 	out := make([]*Face, 0, maxFallbackFaces)
 	for _, f := range c.Faces {

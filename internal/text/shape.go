@@ -188,33 +188,41 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 		// Load named faces only as required for coverage. A failing face is
 		// excluded permanently and ranking is recomputed to admit its runner-up.
 		// The scratch segmenter is free here: clusterFaces re-inits it later.
-		named := choices
+		var named []*Face
 		seg := &e.scratch.graphemes
-		seg.Init(text)
-		it := seg.GraphemeIterator()
 		missing := e.scratch.missing[:0]
-		for it.Next() {
-			cluster := it.Grapheme().Text
-			covered := false
-			for {
-				named = e.catalog.candidates(r)
-				failed := false
-				for _, f := range named {
-					if !f.ready() {
-						failed = true
-						break
+		for {
+			seg.Init(text)
+			it := seg.GraphemeIterator()
+			missing = missing[:0]
+			for it.Next() {
+				cluster := it.Grapheme().Text
+				covered := false
+				for {
+					named = e.catalog.candidates(r)
+					failed := false
+					for _, f := range named {
+						if !f.ready() {
+							failed = true
+							break
+						}
+						if faceCovers(f, cluster) {
+							covered = true
+							break
+						}
 					}
-					if faceCovers(f, cluster) {
-						covered = true
+					if covered || !failed {
 						break
 					}
 				}
-				if covered || !failed {
-					break
+				if !covered {
+					missing = append(missing, cluster...)
 				}
 			}
-			if !covered {
-				missing = append(missing, cluster...)
+			// A partial lazy index may lack faces of the named families:
+			// index every font before falling back, and check coverage again.
+			if len(missing) == 0 || !e.catalog.indexAll() {
+				break
 			}
 		}
 		// Rebuild after failed loads. The fallback window excludes named
@@ -235,7 +243,7 @@ func (e *Engine) shape(text []rune, r Request, direction di.Direction, levels []
 				choices = append(choices, f)
 				complete := true
 				seg.Init(missing)
-				it = seg.GraphemeIterator()
+				it := seg.GraphemeIterator()
 				for it.Next() {
 					covered := false
 					for _, candidate := range choices {
