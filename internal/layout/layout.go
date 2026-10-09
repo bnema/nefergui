@@ -218,6 +218,77 @@ func Layout(root *Node, options Options) (Output, error) {
 	return out, nil
 }
 
+// Natural returns the border-box size root takes when it is not stretched: the
+// widest and tallest envelope of its content plus its padding and border,
+// honoring explicit width, height, min and max like Layout. Text wraps at
+// options.Width, so the width never exceeds it unless an explicit width says
+// so. options.Height is unused. Margins are not part of the result.
+func Natural(root *Node, options Options) (Size, error) {
+	if root == nil {
+		return Size{}, nil
+	}
+	ctx := newContext(options)
+	s := style(root)
+	if s.Display == css.KeywordNone {
+		return Size{}, nil
+	}
+	if err := validateStackRects(root, s); err != nil {
+		return Size{}, err
+	}
+	availableW, availableH := safe(options.Width), safe(options.Height)
+	margin := edges(s.Margin, availableW)
+	padding := nonnegative(edges(s.Padding, availableW))
+	border := nonnegative(edges(s.BorderWidth, availableW))
+	if s.BorderStyle.Top != css.KeywordSolid {
+		border.Top = 0
+	}
+	if s.BorderStyle.Right != css.KeywordSolid {
+		border.Right = 0
+	}
+	if s.BorderStyle.Bottom != css.KeywordSolid {
+		border.Bottom = 0
+	}
+	if s.BorderStyle.Left != css.KeywordSolid {
+		border.Left = 0
+	}
+	insetW := padding.horizontal() + border.horizontal()
+	insetH := padding.vertical() + border.vertical()
+	borderBox := s.BoxSizing == css.KeywordBorderBox
+	w, explicitW := length(s.Width, availableW)
+	h, explicitH := length(s.Height, availableH)
+	if explicitW {
+		w = bounded(w, s.MinWidth, s.MaxWidth, availableW)
+		if !borderBox {
+			w += insetW
+		}
+	}
+	if explicitH {
+		h = bounded(h, s.MinHeight, s.MaxHeight, availableH)
+		if !borderBox {
+			h += insetH
+		}
+	}
+	contentW := safe(availableW - margin.horizontal() - insetW)
+	if explicitW {
+		contentW = safe(w - insetW)
+	}
+	measureW := contentW
+	if root.Kind == Text && root.NoWrap {
+		measureW = 0
+	}
+	measured, _, err := ctx.intrinsicDepth(root, measureW, 1)
+	if err != nil {
+		return Size{}, err
+	}
+	if !explicitW {
+		w = boxBound(measured.W+insetW, s.MinWidth, s.MaxWidth, availableW, insetW, borderBox)
+	}
+	if !explicitH {
+		h = boxBound(measured.H+insetH, s.MinHeight, s.MaxHeight, availableH, insetH, borderBox)
+	}
+	return Size{safe(math.Max(w, insetW)), safe(math.Max(h, insetH))}, nil
+}
+
 // display paints the placed tree into a list sized once from the tree.
 func (c context) display(root *Node, tree *Result) []Command {
 	n := countCommands(root, tree)
