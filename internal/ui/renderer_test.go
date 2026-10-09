@@ -5,6 +5,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/bnema/nefergui/internal/layout"
@@ -352,5 +353,140 @@ func TestRendererLockModifiersDoNotChangeInput(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+type measureModel struct{ title, body string }
+
+func measureView(f *Frame, m *measureModel) {
+	root := f.Root(Inline("padding:4px"))
+	root.Text(m.title)
+	root.Text(m.body)
+}
+
+func TestRendererMeasureNaturalSizeBeforeResize(t *testing.T) {
+	r, _ := newTestRenderer(t) // the mock target has no expectations: any target call fails
+	m := measureModel{title: "Title", body: "short"}
+	w, h, err := r.Measure(&m, measureView, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w <= 8 || w >= 400 || h <= 8 || w != float64(int(w)) || h != float64(int(h)) {
+		t.Fatalf("size %g x %g", w, h)
+	}
+	single := h
+	m.body = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau"
+	w, h, err = r.Measure(&m, measureView, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w != 100 || h <= single+10 {
+		t.Fatalf("wrapped size %g x %g, one-line height %g", w, h, single)
+	}
+}
+
+func TestRendererMeasureValidation(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{}
+	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		if _, _, err := r.Measure(&m, measureView, bad); err == nil {
+			t.Errorf("maxWidth %v accepted", bad)
+		}
+	}
+	if _, _, err := r.Measure[measureModel](nil, measureView, 100); err == nil {
+		t.Error("nil model accepted")
+	}
+	if _, _, err := r.Measure(&m, nil, 100); err == nil {
+		t.Error("nil view accepted")
+	}
+	if w, h, err := r.Measure(&m, func(*Frame, *measureModel) {}, 100); err != nil || w != 0 || h != 0 {
+		t.Errorf("view without root: %g x %g %v", w, h, err)
+	}
+	tg := r.target.(*mocktarget)
+	tg.EXPECT().Close().Return(nil).Once()
+	_ = r.Close()
+	if _, _, err := r.Measure(&m, measureView, 100); err == nil {
+		t.Error("closed renderer accepted")
+	}
+}
+
+func TestRendererMeasureChangesNoState(t *testing.T) {
+	r, tg := newTestRenderer(t)
+	type model struct {
+		clicks int
+		text   string
+	}
+	m := model{text: "edit me"}
+	view := func(f *Frame, m *model) {
+		root := f.Root()
+		if root.Button("Go", Key("go"), Inline("width:60px;height:20px")).Activated() {
+			m.clicks++
+		}
+		root.Input("field", &m.text, Key("field"))
+	}
+	var out Output
+	tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
+	r.Resize(200, 100, 1)
+	drawOK(tg, nil).Maybe()
+	render := func() {
+		t.Helper()
+		for i := 0; i < 3; i++ {
+			if _, err := r.Render(&out, &m, view); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	render()
+	r.Input(&Input{Kind: InputPointerMotion, X: 5, Y: 5})
+	r.Input(&Input{Kind: InputKey, Keysym: 0xff09, Pressed: true}) // Tab: focus the button
+	render()
+	draws := len(tg.Calls)
+	rt := r.rt
+	if rt.state.hover == nil || rt.state.focus == nil {
+		t.Fatalf("setup: hover=%v focus=%v", rt.state.hover, rt.state.focus)
+	}
+	// Input queued but not yet built must survive Measure untouched.
+	r.Input(&Input{Kind: InputPointerPress, X: 5, Y: 5, Button: 0x110, Pressed: true})
+	r.Input(&Input{Kind: InputPointerRelease, X: 5, Y: 5, Button: 0x110})
+	before := struct {
+		state                interactionState
+		committed            *element
+		generation           uint64
+		edits, pending, wake int
+		styles               any
+		engine               any
+	}{rt.state, rt.committed, rt.generation, len(rt.edits), len(rt.pending), len(rt.wake), rt.styles, rt.textEngine}
+	if before.pending == 0 || before.wake == 0 {
+		t.Fatalf("setup: pending=%d wake=%d", before.pending, before.wake)
+	}
+
+	if _, _, err := r.Measure(&m, view, 300); err != nil {
+		t.Fatal(err)
+	}
+
+	if rt.state.hover != before.state.hover || rt.state.focus != before.state.focus || rt.state.x != before.state.x || rt.state.y != before.state.y || rt.state.inside != before.state.inside || rt.state.down != before.state.down {
+		t.Fatalf("interaction state changed: %+v -> %+v", before.state, rt.state)
+	}
+	if rt.committed != before.committed || rt.generation != before.generation {
+		t.Fatal("committed tree or generation changed")
+	}
+	if len(rt.edits) != before.edits || rt.styles != before.styles || rt.textEngine != before.engine {
+		t.Fatal("runtime parts changed")
+	}
+	if len(rt.pending) != before.pending || len(rt.wake) != before.wake {
+		t.Fatalf("pending %d -> %d, wake %d -> %d", before.pending, len(rt.pending), before.wake, len(rt.wake))
+	}
+	if m.clicks != 0 || m.text != "edit me" {
+		t.Fatalf("model changed: %+v", m)
+	}
+	if len(tg.Calls) != draws {
+		t.Fatalf("target called by Measure: %d -> %d calls", draws, len(tg.Calls))
+	}
+	render()
+	if m.clicks != 1 {
+		t.Fatalf("the click queued before Measure was lost: clicks=%d", m.clicks)
+	}
+	if rt.state.hover == nil || rt.state.focus == nil {
+		t.Fatalf("hover/focus lost after Render: %+v", rt.state)
 	}
 }

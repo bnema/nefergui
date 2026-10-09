@@ -283,6 +283,59 @@ func (r *Renderer) Render[T any](out *Output, model *T, view func(*Frame, *T)) (
 	return true, nil
 }
 
+// Measure returns the logical size, in pixels rounded up, that view needs for
+// model: its natural width, at most maxWidth, and the height the content takes
+// at that width (text wraps at maxWidth). Use it to size a surface before
+// creating it.
+//
+// The view is built in a temporary runtime that shares only this Renderer's
+// styles and text engine (caches: a Measure ages their entries by one frame,
+// so a later Render may recompute some, with identical results); hover, focus, scroll offsets, editor state, queued input, the Wake channel
+// and the target are neither read nor changed, nothing is drawn, and the view
+// sees no events. Call it from the owner goroutine, before or after Resize. It
+// allocates and shapes text: use it when opening a surface, not on every frame.
+// It returns an error when the Renderer is closed, model or view is nil, or
+// maxWidth is not a finite number above zero. A view that declares no root
+// measures 0 by 0.
+func (r *Renderer) Measure[T any](model *T, view func(*Frame, *T), maxWidth float64) (width, height float64, err error) {
+	if r.closed {
+		return 0, 0, errClosed
+	}
+	if model == nil || view == nil {
+		return 0, 0, errors.New("nefergui: nil model or view")
+	}
+	if math.IsNaN(maxWidth) || math.IsInf(maxWidth, 0) || maxWidth <= 0 {
+		return 0, 0, errors.New("nefergui: Measure needs a finite maxWidth above zero")
+	}
+	const tall = 1 << 20
+	tmp := newRuntime()
+	tmp.styles, tmp.textEngine = r.rt.styles, r.rt.textEngine
+	tmp.width, tmp.height = maxWidth, tall
+	tmp.redraw = true
+	if !tmp.Build(func(f *Frame) { view(f, model) }) {
+		return 0, 0, errors.New("nefergui: Measure could not lay out the view")
+	}
+	if tmp.committed == nil {
+		return 0, 0, nil
+	}
+	root := tmp.layoutTree(tmp.committed)
+	opts := layout.Options{Width: maxWidth, Height: tall, TextEngine: tmp.textEngine}
+	natural, err := layout.Natural(root, opts)
+	if err != nil {
+		return 0, 0, fmt.Errorf("nefergui: measure: %w", err)
+	}
+	w := math.Min(natural.W, maxWidth)
+	opts.Width = w
+	out, err := layout.Layout(root, opts)
+	if err != nil {
+		return 0, 0, fmt.Errorf("nefergui: measure: %w", err)
+	}
+	if out.Tree == nil {
+		return 0, 0, nil
+	}
+	return math.Ceil(w), math.Ceil(out.Tree.Border.H), nil
+}
+
 // export copies the target's frame description into out and adds the parts
 // derived from the UI: damage, cursor and the staged input region.
 func (r *Renderer) export(out *Output) {

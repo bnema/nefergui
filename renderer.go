@@ -16,6 +16,11 @@ import "github.com/bnema/nefergui/internal/ui"
 // Render is generic over the model type, so it is a generic method:
 //
 //	ok, err := r.Render(&out, &model, view)
+//
+// Measure sizes a view before a surface exists (owner goroutine, not for every
+// frame); it changes no Renderer state:
+//
+//	width, height, err := r.Measure(&model, view, maxWidth)
 type Renderer = ui.Renderer
 
 // RendererConfig configures NewRenderer. MainDevice and Formats come from the
