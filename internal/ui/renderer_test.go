@@ -5,8 +5,11 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"testing"
 
+	"github.com/bnema/nefergui/internal/css"
 	"github.com/bnema/nefergui/internal/layout"
 	"github.com/bnema/nefergui/internal/presentation/session"
 	"github.com/bnema/nefergui/internal/text"
@@ -352,5 +355,301 @@ func TestRendererLockModifiersDoNotChangeInput(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+type measureModel struct{ title, body string }
+
+func measureView(f *Frame, m *measureModel) {
+	root := f.Root(Inline("padding:4px"))
+	root.Text(m.title)
+	root.Text(m.body)
+}
+
+func TestRendererMeasureNaturalSizeBeforeResize(t *testing.T) {
+	r, _ := newTestRenderer(t) // the mock target has no expectations: any target call fails
+	m := measureModel{title: "Title", body: "short"}
+	w, h, err := r.Measure(&m, measureView, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w <= 8 || w >= 400 || h <= 8 || w != float64(int(w)) || h != float64(int(h)) {
+		t.Fatalf("size %g x %g", w, h)
+	}
+	single := h
+	m.body = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau"
+	w, h, err = r.Measure(&m, measureView, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w != 100 || h <= single+10 {
+		t.Fatalf("wrapped size %g x %g, one-line height %g", w, h, single)
+	}
+}
+
+func TestRendererMeasureValidation(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{}
+	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		if _, _, err := r.Measure(&m, measureView, bad); err == nil {
+			t.Errorf("maxWidth %v accepted", bad)
+		}
+	}
+	if _, _, err := r.Measure[measureModel](nil, measureView, 100); err == nil {
+		t.Error("nil model accepted")
+	}
+	if _, _, err := r.Measure(&m, nil, 100); err == nil {
+		t.Error("nil view accepted")
+	}
+	if w, h, err := r.Measure(&m, func(*Frame, *measureModel) {}, 100); err != nil || w != 0 || h != 0 {
+		t.Errorf("view without root: %g x %g %v", w, h, err)
+	}
+	tg := r.target.(*mocktarget)
+	tg.EXPECT().Close().Return(nil).Once()
+	_ = r.Close()
+	if _, _, err := r.Measure(&m, measureView, 100); err == nil {
+		t.Error("closed renderer accepted")
+	}
+}
+
+func TestRendererMeasureChangesNoState(t *testing.T) {
+	r, tg := newTestRenderer(t)
+	type model struct {
+		clicks int
+		text   string
+	}
+	m := model{text: "edit me"}
+	view := func(f *Frame, m *model) {
+		root := f.Root()
+		if root.Button("Go", Key("go"), Inline("width:60px;height:20px")).Activated() {
+			m.clicks++
+		}
+		root.Input("field", &m.text, Key("field"))
+	}
+	var out Output
+	tg.EXPECT().Resize(mock.Anything, mock.Anything).Return().Once()
+	r.Resize(200, 100, 1)
+	drawOK(tg, nil).Maybe()
+	render := func() {
+		t.Helper()
+		for i := 0; i < 3; i++ {
+			if _, err := r.Render(&out, &m, view); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	render()
+	r.Input(&Input{Kind: InputPointerMotion, X: 5, Y: 5})
+	r.Input(&Input{Kind: InputKey, Keysym: 0xff09, Pressed: true}) // Tab: focus the button
+	render()
+	draws := len(tg.Calls)
+	rt := r.rt
+	if rt.state.hover == nil || rt.state.focus == nil {
+		t.Fatalf("setup: hover=%v focus=%v", rt.state.hover, rt.state.focus)
+	}
+	// Input queued but not yet built must survive Measure untouched.
+	r.Input(&Input{Kind: InputPointerPress, X: 5, Y: 5, Button: 0x110, Pressed: true})
+	r.Input(&Input{Kind: InputPointerRelease, X: 5, Y: 5, Button: 0x110})
+	before := struct {
+		state                interactionState
+		committed            *element
+		generation           uint64
+		edits, pending, wake int
+		styles               any
+		engine               any
+	}{rt.state, rt.committed, rt.generation, len(rt.edits), len(rt.pending), len(rt.wake), rt.styles, rt.textEngine}
+	if before.pending == 0 || before.wake == 0 {
+		t.Fatalf("setup: pending=%d wake=%d", before.pending, before.wake)
+	}
+
+	if _, _, err := r.Measure(&m, view, 300); err != nil {
+		t.Fatal(err)
+	}
+
+	if rt.state.hover != before.state.hover || rt.state.focus != before.state.focus || rt.state.x != before.state.x || rt.state.y != before.state.y || rt.state.inside != before.state.inside || rt.state.down != before.state.down {
+		t.Fatalf("interaction state changed: %+v -> %+v", before.state, rt.state)
+	}
+	if rt.committed != before.committed || rt.generation != before.generation {
+		t.Fatal("committed tree or generation changed")
+	}
+	if len(rt.edits) != before.edits || rt.styles != before.styles || rt.textEngine != before.engine {
+		t.Fatal("runtime parts changed")
+	}
+	if len(rt.pending) != before.pending || len(rt.wake) != before.wake {
+		t.Fatalf("pending %d -> %d, wake %d -> %d", before.pending, len(rt.pending), before.wake, len(rt.wake))
+	}
+	if m.clicks != 0 || m.text != "edit me" {
+		t.Fatalf("model changed: %+v", m)
+	}
+	if len(tg.Calls) != draws {
+		t.Fatalf("target called by Measure: %d -> %d calls", draws, len(tg.Calls))
+	}
+	render()
+	if m.clicks != 1 {
+		t.Fatalf("the click queued before Measure was lost: clicks=%d", m.clicks)
+	}
+	if rt.state.hover == nil || rt.state.focus == nil {
+		t.Fatalf("hover/focus lost after Render: %+v", rt.state)
+	}
+}
+
+const measureLong = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
+
+func TestRendererMeasureRootMargins(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{body: measureLong}
+	view := func(f *Frame, m *measureModel) {
+		root := f.Root(Inline("margin:20px;padding:3px"))
+		root.Text(m.body)
+	}
+	const maxWidth = 300
+	w, h, err := r.Measure(&m, view, maxWidth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The widest wrapped line plus padding and margins: close to, never over, the limit.
+	if w > maxWidth || w < maxWidth-60 {
+		t.Fatalf("width %g, want within 60px below %d", w, maxWidth)
+	}
+	// Lay the same view out at the measured size, as a surface would.
+	rt := newRuntime()
+	rt.styles, rt.textEngine = r.rt.styles, r.rt.textEngine
+	rt.width, rt.height = w, h
+	rt.redraw = true
+	if !rt.Build(func(f *Frame) { view(f, &m) }) {
+		t.Fatal("build failed")
+	}
+	tree := rt.output.Tree
+	if tree == nil {
+		t.Fatal("no layout")
+	}
+	right, bottom := tree.Border.X+tree.Border.W+tree.Margin.Right, tree.Border.Y+tree.Border.H+tree.Margin.Bottom
+	if right > w+0.01 || bottom > h+0.01 || bottom < h-1 {
+		t.Fatalf("laid-out margin box %g x %g does not fit the measured %g x %g", right, bottom, w, h)
+	}
+	if tree.Border.X != 20 || tree.Border.Y != 20 {
+		t.Fatalf("margins not applied: %+v", tree.Border)
+	}
+	if len(tree.Children) != 1 || len(tree.Children[0].Lines) < 2 {
+		t.Fatalf("text did not wrap at the measured width: %+v", tree.Children)
+	}
+	// Without the margin, the same text must be shorter than with it: the
+	// margin narrows the wrap width by 40px and adds 40px of height.
+	_, plain, err := r.Measure(&m, func(f *Frame, m *measureModel) { f.Root(Inline("padding:3px")).Text(m.body) }, maxWidth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h < plain+40 {
+		t.Fatalf("height %g with margins, %g without: margins missing", h, plain)
+	}
+}
+
+func TestRendererMeasurePercentHeightsAreIndefinite(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{title: "Title", body: "body"}
+	build := func(rootStyle string) func(*Frame, *measureModel) {
+		return func(f *Frame, m *measureModel) {
+			root := f.Root(Inline(rootStyle))
+			root.Text(m.title)
+			root.Text(m.body)
+		}
+	}
+	_, auto, err := r.Measure(&m, build("padding:4px"), 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auto <= 8 || auto > 200 {
+		t.Fatalf("setup: content height %g", auto)
+	}
+	for _, style := range []string{
+		"padding:4px;height:100%",
+		"padding:4px;min-height:50%",
+		"padding:4px;max-height:50%",
+		"padding:4px;height:100%;min-height:50%;max-height:100%",
+	} {
+		_, h, err := r.Measure(&m, build(style), 200)
+		if err != nil {
+			t.Fatalf("%s: %v", style, err)
+		}
+		if h != auto {
+			t.Errorf("%q: height %g, want the content height %g", style, h, auto)
+		}
+	}
+	// Pixel heights still apply.
+	if _, h, err := r.Measure(&m, build("height:123px"), 200); err != nil || h != 123 {
+		t.Errorf("height:123px gave %g, %v", h, err)
+	}
+	var seen float64
+	_, _, err = r.Measure(&m, func(f *Frame, m *measureModel) {
+		_, seen = f.Size()
+		f.Root().Text(m.title)
+	}, 200)
+	if err != nil || seen < 1<<20 {
+		t.Errorf("Frame.Size height %g (err %v), want unbounded", seen, err)
+	}
+}
+
+func TestRendererMeasureLayoutError(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{}
+	flexStackWithRect := func(f *Frame, _ *measureModel) {
+		root := f.Root()
+		stack := root.Stack(Inline("display:flex"))
+		stack.Box().Rect(0, 0, 10, 10)
+	}
+	_, _, err := r.Measure(&m, flexStackWithRect, 100)
+	if err == nil || !strings.HasPrefix(err.Error(), "nefergui: measure: ") || !strings.Contains(err.Error(), "Rect") {
+		t.Fatalf("flex Stack with a Rect child: %v", err)
+	}
+	deep := func(f *Frame, _ *measureModel) {
+		n := f.Root()
+		for i := 0; i < 300; i++ {
+			n = n.Box()
+		}
+		n.Text("x")
+	}
+	_, _, err = r.Measure(&m, deep, 100)
+	if !errors.Is(err, layout.ErrDepth) || !strings.HasPrefix(err.Error(), "nefergui: measure: ") {
+		t.Fatalf("deep tree: %v, want a wrapped ErrDepth", err)
+	}
+	// The Renderer stays usable.
+	if _, _, err := r.Measure(&m, measureView, 100); err != nil {
+		t.Fatalf("after errors: %v", err)
+	}
+}
+
+func TestRendererMeasureDoesNotAgeSharedCaches(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{title: "one", body: "two"}
+	view := func(f *Frame, m *measureModel) {
+		root := f.Root(Class("rendered"))
+		root.Text(m.title)
+		root.Text(m.body)
+	}
+	other := func(f *Frame, m *measureModel) {
+		f.Root(Class("other")).Text("unrelated " + m.title)
+	}
+	rt := r.rt
+	build := func() *css.Computed {
+		t.Helper()
+		rt.Redraw()
+		if !rt.Build(func(f *Frame) { view(f, &m) }) {
+			t.Fatal("build failed")
+		}
+		return rt.committed.computed
+	}
+	first := build()
+	if first == nil {
+		t.Fatal("no computed style")
+	}
+	// Each Build that called EndFrame would age the entries out: after three
+	// builds of another view the "rendered" style would be recomputed.
+	for i := 0; i < 3; i++ {
+		if _, _, err := r.Measure(&m, other, 200); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if again := build(); again != first {
+		t.Fatal("Measure aged the shared style cache: the next Render recomputed the root style")
 	}
 }

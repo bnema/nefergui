@@ -50,6 +50,13 @@ type runtime struct {
 	redraw                bool
 	inputRects            []Rect
 	inputNil, inputStaged bool
+	// layoutErr is the error of the last layout that made Build fail, nil
+	// after a layout that succeeded. Measure reports it.
+	layoutErr error
+	// measuring marks the temporary runtime of Renderer.Measure: it shares the
+	// style and text caches of a Renderer, which only that Renderer's frames
+	// may age.
+	measuring bool
 }
 
 func newRuntime() *runtime {
@@ -134,9 +141,11 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	f := &r.frame
 	defer func() {
 		f.active = false
-		r.styles.EndFrame()
-		if r.textEngine != nil {
-			r.textEngine.EndFrame()
+		if !r.measuring {
+			r.styles.EndFrame()
+			if r.textEngine != nil {
+				r.textEngine.EndFrame()
+			}
 		}
 		// A panicking view is not committed; the next build may retry.
 		if recovered := recover(); recovered != nil {
@@ -148,6 +157,7 @@ func (r *runtime) Build(view func(*Frame)) bool {
 	r.mu.Lock()
 	// State can change while the view runs. Schedule another frame instead of
 	// overwriting that newer input with this frame's snapshot.
+	r.layoutErr = nil
 	if f.root != nil {
 		f.refresh(f.root)
 		input := r.layoutTree(f.root)
@@ -157,6 +167,7 @@ func (r *runtime) Build(view func(*Frame)) bool {
 		opts := layout.Options{Width: r.width, Height: r.height, TextEngine: r.textEngine, Arena: &r.layouts[nextLayout]}
 		out, err := layout.Layout(input, opts)
 		if err != nil {
+			r.layoutErr = err
 			r.mu.Unlock()
 			r.Redraw()
 			return false
@@ -168,6 +179,7 @@ func (r *runtime) Build(view func(*Frame)) bool {
 			input = r.layoutTree(f.root)
 			out, err = layout.Layout(input, opts)
 			if err != nil {
+				r.layoutErr = err
 				r.mu.Unlock()
 				r.Redraw()
 				return false

@@ -283,6 +283,84 @@ func (r *Renderer) Render[T any](out *Output, model *T, view func(*Frame, *T)) (
 	return true, nil
 }
 
+// Measure returns the logical size, in pixels rounded up, that view needs for
+// model: its natural width, at most maxWidth, and the height the content takes
+// at that width (text wraps at maxWidth). Use it to size a surface before
+// creating it. The size includes the root's margins.
+//
+// The view is built in a temporary runtime that shares only this Renderer's
+// styles and text engine. Those caches only grow during Measure: it does not
+// age their entries, so a later Render finds its own entries intact. Hover,
+// focus, scroll offsets, editor state, queued input, the Wake channel and the
+// target are neither read nor changed, nothing is drawn, and the view sees no
+// events.
+//
+// There is no surface yet, so the height is indefinite: inside the view
+// Frame.Size reports an unbounded height (1<<20), and percentage height,
+// min-height and max-height of the root are treated as auto, as for nested
+// boxes, instead of resolving against that value. Lengths in pixels apply.
+//
+// Call it from the owner goroutine, before or after Resize, never from inside
+// a view callback. It allocates and shapes text: use it when opening a
+// surface, not on every frame. It returns an error when the Renderer is
+// closed, model or view is nil, maxWidth is not a finite number above zero, or
+// the view cannot be laid out (the layout error is wrapped). A view that
+// declares no root measures 0 by 0.
+func (r *Renderer) Measure[T any](model *T, view func(*Frame, *T), maxWidth float64) (width, height float64, err error) {
+	if r.closed {
+		return 0, 0, errClosed
+	}
+	if model == nil || view == nil {
+		return 0, 0, errors.New("nefergui: nil model or view")
+	}
+	if math.IsNaN(maxWidth) || math.IsInf(maxWidth, 0) || maxWidth <= 0 {
+		return 0, 0, errors.New("nefergui: Measure needs a finite maxWidth above zero")
+	}
+	const tall = 1 << 20
+	tmp := &runtime{
+		wake: make(chan struct{}, 1), styles: r.rt.styles, textEngine: r.rt.textEngine,
+		width: maxWidth, height: tall, scale: 1, redraw: true,
+		edits: make(map[string]*edit.State), measuring: true,
+	}
+	if !tmp.Build(func(f *Frame) { view(f, model) }) {
+		if tmp.layoutErr != nil {
+			return 0, 0, fmt.Errorf("nefergui: measure: %w", tmp.layoutErr)
+		}
+		return 0, 0, errors.New("nefergui: measure: could not build the view")
+	}
+	if tmp.committed == nil {
+		return 0, 0, nil
+	}
+	root := tmp.layoutTree(tmp.committed)
+	if root.Style != nil {
+		st := layout.IndefiniteHeights(*root.Style)
+		root.Style = &st
+	}
+	opts := layout.Options{Width: maxWidth, Height: tall, TextEngine: tmp.textEngine}
+	natural, err := layout.Natural(root, opts)
+	if err != nil {
+		return 0, 0, fmt.Errorf("nefergui: measure: %w", err)
+	}
+	// Natural is a border box without margins, while the surface holds the
+	// margin box: Layout subtracts the margins from the width it is given.
+	var m layout.Edges
+	if tmp.output.Tree != nil {
+		m = tmp.output.Tree.Margin
+	}
+	w := math.Min(natural.W+math.Max(0, m.Left)+math.Max(0, m.Right), maxWidth)
+	opts.Width = w
+	out, err := layout.Layout(root, opts)
+	if err != nil {
+		return 0, 0, fmt.Errorf("nefergui: measure: %w", err)
+	}
+	if out.Tree == nil {
+		return 0, 0, nil
+	}
+	tree := out.Tree
+	h := tree.Border.Y + tree.Border.H + math.Max(0, tree.Margin.Bottom)
+	return math.Ceil(w), math.Ceil(h), nil
+}
+
 // export copies the target's frame description into out and adds the parts
 // derived from the UI: damage, cursor and the staged input region.
 func (r *Renderer) export(out *Output) {
