@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
+	"github.com/bnema/nefergui/internal/css"
 	"github.com/bnema/nefergui/internal/layout"
 	"github.com/bnema/nefergui/internal/presentation/session"
 	"github.com/bnema/nefergui/internal/text"
@@ -488,5 +490,166 @@ func TestRendererMeasureChangesNoState(t *testing.T) {
 	}
 	if rt.state.hover == nil || rt.state.focus == nil {
 		t.Fatalf("hover/focus lost after Render: %+v", rt.state)
+	}
+}
+
+const measureLong = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
+
+func TestRendererMeasureRootMargins(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{body: measureLong}
+	view := func(f *Frame, m *measureModel) {
+		root := f.Root(Inline("margin:20px;padding:3px"))
+		root.Text(m.body)
+	}
+	const maxWidth = 300
+	w, h, err := r.Measure(&m, view, maxWidth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The widest wrapped line plus padding and margins: close to, never over, the limit.
+	if w > maxWidth || w < maxWidth-60 {
+		t.Fatalf("width %g, want within 60px below %d", w, maxWidth)
+	}
+	// Lay the same view out at the measured size, as a surface would.
+	rt := newRuntime()
+	rt.styles, rt.textEngine = r.rt.styles, r.rt.textEngine
+	rt.width, rt.height = w, h
+	rt.redraw = true
+	if !rt.Build(func(f *Frame) { view(f, &m) }) {
+		t.Fatal("build failed")
+	}
+	tree := rt.output.Tree
+	if tree == nil {
+		t.Fatal("no layout")
+	}
+	right, bottom := tree.Border.X+tree.Border.W+tree.Margin.Right, tree.Border.Y+tree.Border.H+tree.Margin.Bottom
+	if right > w+0.01 || bottom > h+0.01 || bottom < h-1 {
+		t.Fatalf("laid-out margin box %g x %g does not fit the measured %g x %g", right, bottom, w, h)
+	}
+	if tree.Border.X != 20 || tree.Border.Y != 20 {
+		t.Fatalf("margins not applied: %+v", tree.Border)
+	}
+	if len(tree.Children) != 1 || len(tree.Children[0].Lines) < 2 {
+		t.Fatalf("text did not wrap at the measured width: %+v", tree.Children)
+	}
+	// Without the margin, the same text must be shorter than with it: the
+	// margin narrows the wrap width by 40px and adds 40px of height.
+	_, plain, err := r.Measure(&m, func(f *Frame, m *measureModel) { f.Root(Inline("padding:3px")).Text(m.body) }, maxWidth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h < plain+40 {
+		t.Fatalf("height %g with margins, %g without: margins missing", h, plain)
+	}
+}
+
+func TestRendererMeasurePercentHeightsAreIndefinite(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{title: "Title", body: "body"}
+	build := func(rootStyle string) func(*Frame, *measureModel) {
+		return func(f *Frame, m *measureModel) {
+			root := f.Root(Inline(rootStyle))
+			root.Text(m.title)
+			root.Text(m.body)
+		}
+	}
+	_, auto, err := r.Measure(&m, build("padding:4px"), 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auto <= 8 || auto > 200 {
+		t.Fatalf("setup: content height %g", auto)
+	}
+	for _, style := range []string{
+		"padding:4px;height:100%",
+		"padding:4px;min-height:50%",
+		"padding:4px;max-height:50%",
+		"padding:4px;height:100%;min-height:50%;max-height:100%",
+	} {
+		_, h, err := r.Measure(&m, build(style), 200)
+		if err != nil {
+			t.Fatalf("%s: %v", style, err)
+		}
+		if h != auto {
+			t.Errorf("%q: height %g, want the content height %g", style, h, auto)
+		}
+	}
+	// Pixel heights still apply.
+	if _, h, err := r.Measure(&m, build("height:123px"), 200); err != nil || h != 123 {
+		t.Errorf("height:123px gave %g, %v", h, err)
+	}
+	var seen float64
+	_, _, err = r.Measure(&m, func(f *Frame, m *measureModel) {
+		_, seen = f.Size()
+		f.Root().Text(m.title)
+	}, 200)
+	if err != nil || seen < 1<<20 {
+		t.Errorf("Frame.Size height %g (err %v), want unbounded", seen, err)
+	}
+}
+
+func TestRendererMeasureLayoutError(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{}
+	flexStackWithRect := func(f *Frame, _ *measureModel) {
+		root := f.Root()
+		stack := root.Stack(Inline("display:flex"))
+		stack.Box().Rect(0, 0, 10, 10)
+	}
+	_, _, err := r.Measure(&m, flexStackWithRect, 100)
+	if err == nil || !strings.HasPrefix(err.Error(), "nefergui: measure: ") || !strings.Contains(err.Error(), "Rect") {
+		t.Fatalf("flex Stack with a Rect child: %v", err)
+	}
+	deep := func(f *Frame, _ *measureModel) {
+		n := f.Root()
+		for i := 0; i < 300; i++ {
+			n = n.Box()
+		}
+		n.Text("x")
+	}
+	_, _, err = r.Measure(&m, deep, 100)
+	if !errors.Is(err, layout.ErrDepth) || !strings.HasPrefix(err.Error(), "nefergui: measure: ") {
+		t.Fatalf("deep tree: %v, want a wrapped ErrDepth", err)
+	}
+	// The Renderer stays usable.
+	if _, _, err := r.Measure(&m, measureView, 100); err != nil {
+		t.Fatalf("after errors: %v", err)
+	}
+}
+
+func TestRendererMeasureDoesNotAgeSharedCaches(t *testing.T) {
+	r, _ := newTestRenderer(t)
+	m := measureModel{title: "one", body: "two"}
+	view := func(f *Frame, m *measureModel) {
+		root := f.Root(Class("rendered"))
+		root.Text(m.title)
+		root.Text(m.body)
+	}
+	other := func(f *Frame, m *measureModel) {
+		f.Root(Class("other")).Text("unrelated " + m.title)
+	}
+	rt := r.rt
+	build := func() *css.Computed {
+		t.Helper()
+		rt.Redraw()
+		if !rt.Build(func(f *Frame) { view(f, &m) }) {
+			t.Fatal("build failed")
+		}
+		return rt.committed.computed
+	}
+	first := build()
+	if first == nil {
+		t.Fatal("no computed style")
+	}
+	// Each Build that called EndFrame would age the entries out: after three
+	// builds of another view the "rendered" style would be recomputed.
+	for i := 0; i < 3; i++ {
+		if _, _, err := r.Measure(&m, other, 200); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if again := build(); again != first {
+		t.Fatal("Measure aged the shared style cache: the next Render recomputed the root style")
 	}
 }
