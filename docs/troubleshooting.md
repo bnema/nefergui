@@ -7,3 +7,4 @@
 - Build with `-tags nefergui_debug` for identity diagnostics (duplicate keys, unkeyed type changes, stale handles).
 - To regenerate committed SPIR-V, install `glslc` and run `go generate ./...`; consumers do not need `glslc`.
 - If a requested font cannot be opened or parsed, text selection skips that face and tries the next matching face. Inspect catalog diagnostics for the failed path; system font discovery uses XDG font directories and does not require fontconfig.
+- System fonts are indexed on demand: at startup only files whose name matches a requested or default family (for example `NotoSans-Regular.ttf` for `Noto Sans`). A family that no file name reveals, or a glyph the named families lack, indexes every remaining font once, in parallel. Name a family that is installed under a matching file name to keep the first frame fast.

@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/bnema/nefergui/internal/bidi"
 	"github.com/go-text/typesetting/font"
@@ -156,6 +157,16 @@ type IndexSource interface {
 	Open(path string) (io.ReadCloser, error)
 }
 
+// LazySource lists font files cheaply and indexes chosen ones on demand, so a
+// catalog reads only the files a request needs. Paths fixes the catalog order;
+// IndexFiles returns entries in the order of its paths.
+type LazySource interface {
+	FontSource
+	IndexSource
+	Paths() ([]string, error)
+	IndexFiles(paths []string) ([]FontFile, error)
+}
+
 type FontFile struct {
 	Path          string
 	Family        string
@@ -195,59 +206,89 @@ func (m *metadataReader) Read(p []byte) (int, error) {
 
 func (s SystemSource) Index() ([]FontFile, error) {
 	paths, err := s.paths()
-	var files []FontFile
-	var buffer []byte
-	for _, p := range paths {
-		f, e := os.Open(p)
-		if e != nil {
-			err = errors.Join(err, fmt.Errorf("font %s: %w", p, e))
-			continue
-		}
-		info, statErr := f.Stat()
-		if statErr != nil || info.Size() > maxFontBytes {
-			if statErr == nil {
-				statErr = fmt.Errorf("font exceeds %d byte limit", maxFontBytes)
+	files, e := s.IndexFiles(paths)
+	return files, errors.Join(err, e)
+}
+
+// Paths lists the font files in catalog order without reading them.
+func (s SystemSource) Paths() ([]string, error) { return s.paths() }
+
+// indexWorkers bounds the files read at once. Parallel reads hide the latency
+// of a cold page cache, which dominates on encrypted disks.
+const indexWorkers = 32
+
+// IndexFiles reads the metadata of paths in parallel and returns the entries
+// in path order. Every worker ends before it returns.
+func (SystemSource) IndexFiles(paths []string) ([]FontFile, error) {
+	files := make([][]FontFile, len(paths))
+	errs := make([]error, len(paths))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range min(indexWorkers, len(paths)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var buffer []byte
+			for i := range next {
+				files[i], buffer, errs[i] = indexFile(paths[i], buffer)
 			}
-			err = errors.Join(err, fmt.Errorf("font %s: %w", p, statErr))
-			if closeErr := f.Close(); closeErr != nil {
-				err = errors.Join(err, fmt.Errorf("font %s close: %w", p, closeErr))
-			}
-			continue
-		}
-		reader := &metadataReader{File: f, remaining: maxMetadataBytes}
-		loaders, e := ot.NewLoaders(reader)
-		if e == nil {
-			for i, loader := range loaders {
-				var desc font.Description
-				// Describe ignores table read errors; a failed bounded read
-				// yields no usable family and is excluded from the index.
-				desc, buffer = font.Describe(loader, buffer)
-				if reader.exceeded {
-					err = errors.Join(err, fmt.Errorf("font %s face %d: metadata limit exceeded", p, i))
-					break
-				}
-				if desc.Family != "" {
-					entry := FontFile{Path: p, Family: desc.Family, Aspect: desc.Aspect, Index: i}
-					if raw, tableErr := loader.RawTable(ot.MustNewTag("OS/2")); tableErr == nil && len(raw) >= 58 {
-						for j := range entry.UnicodeRanges {
-							entry.UnicodeRanges[j] = binary.BigEndian.Uint32(raw[42+j*4:])
-						}
-					}
-					if reader.exceeded {
-						err = errors.Join(err, fmt.Errorf("font %s face %d: metadata limit exceeded", p, i))
-						break
-					}
-					files = append(files, entry)
-				}
-			}
-		} else {
-			err = errors.Join(err, fmt.Errorf("font %s: %w", p, e))
-		}
+		}()
+	}
+	for i := range paths {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	return slices.Concat(files...), errors.Join(errs...)
+}
+
+// indexFile reads the metadata of every face in the file at p. buffer is
+// reusable scratch storage.
+func indexFile(p string, buffer []byte) (files []FontFile, _ []byte, err error) {
+	f, e := os.Open(p)
+	if e != nil {
+		return nil, buffer, fmt.Errorf("font %s: %w", p, e)
+	}
+	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
 			err = errors.Join(err, fmt.Errorf("font %s close: %w", p, closeErr))
 		}
+	}()
+	info, statErr := f.Stat()
+	if statErr != nil || info.Size() > maxFontBytes {
+		if statErr == nil {
+			statErr = fmt.Errorf("font exceeds %d byte limit", maxFontBytes)
+		}
+		return nil, buffer, fmt.Errorf("font %s: %w", p, statErr)
 	}
-	return files, err
+	reader := &metadataReader{File: f, remaining: maxMetadataBytes}
+	loaders, e := ot.NewLoaders(reader)
+	if e != nil {
+		return nil, buffer, fmt.Errorf("font %s: %w", p, e)
+	}
+	for i, loader := range loaders {
+		var desc font.Description
+		// Describe ignores table read errors; a failed bounded read yields no
+		// usable family and is excluded from the index.
+		desc, buffer = font.Describe(loader, buffer)
+		if reader.exceeded {
+			return files, buffer, fmt.Errorf("font %s face %d: metadata limit exceeded", p, i)
+		}
+		if desc.Family == "" {
+			continue
+		}
+		entry := FontFile{Path: p, Family: desc.Family, Aspect: desc.Aspect, Index: i}
+		if raw, tableErr := loader.RawTable(ot.MustNewTag("OS/2")); tableErr == nil && len(raw) >= 58 {
+			for j := range entry.UnicodeRanges {
+				entry.UnicodeRanges[j] = binary.BigEndian.Uint32(raw[42+j*4:])
+			}
+		}
+		if reader.exceeded {
+			return files, buffer, fmt.Errorf("font %s face %d: metadata limit exceeded", p, i)
+		}
+		files = append(files, entry)
+	}
+	return files, buffer, nil
 }
 func (SystemSource) Open(path string) (io.ReadCloser, error) { return os.Open(path) }
 
@@ -283,9 +324,17 @@ type Catalog struct {
 	Faces       []*Face
 	source      IndexSource
 	Diagnostics []error
-	// ranked memoizes candidates per request; a face failure clears it,
-	// because failed faces are the only catalog state match depends on.
+	// ranked memoizes candidates per request; a face failure or newly
+	// indexed faces clear it, because match depends only on them.
 	ranked []rankedFaces
+
+	// A LazySource catalog indexes files on demand. Faces stay in path order.
+	lazy     LazySource
+	paths    []string
+	indexed  []bool
+	faceAt   [][]*Face        // faces of each path
+	byStem   map[string][]int // normalized file-name stem to path positions
+	complete bool             // every path is indexed
 }
 
 // maxRanked bounds the candidates memo; distinct font requests per
@@ -299,7 +348,108 @@ type rankedFaces struct {
 	faces           []*Face
 }
 
+// loadLazy lists the files and indexes only those named after the default
+// families, so a catalog is usable without reading every installed font.
+func loadLazy(source LazySource) (*Catalog, error) {
+	paths, err := source.Paths()
+	c := &Catalog{source: source, lazy: source, paths: paths, indexed: make([]bool, len(paths)), faceAt: make([][]*Face, len(paths)), byStem: map[string][]int{}}
+	if err != nil {
+		c.Diagnostics = append(c.Diagnostics, err)
+	}
+	for i, p := range paths {
+		key := fileStem(p)
+		c.byStem[key] = append(c.byStem[key], i)
+	}
+	c.indexStems(genericKeys["sans-serif"])
+	if len(c.Faces) == 0 {
+		c.indexAll()
+	}
+	if len(c.Faces) == 0 {
+		return nil, fmt.Errorf("no usable fonts: %w", errors.Join(c.Diagnostics...))
+	}
+	return c, nil
+}
+
+// fileStem is the normalized family part of a font file name: the name up to
+// the first '-', '[', '_' or '.', so NotoSans-Bold.ttf and NotoSans[wght].ttf
+// both give "notosans", the key of the "Noto Sans" family.
+func fileStem(path string) string {
+	name := filepath.Base(path)
+	if i := strings.IndexAny(name, "-[_."); i >= 0 {
+		name = name[:i]
+	}
+	return font.NormalizeFamily(name)
+}
+
+// indexStems indexes the files whose stem is one of keys.
+func (c *Catalog) indexStems(keys []string) {
+	var todo []int
+	for _, key := range keys {
+		for _, i := range c.byStem[key] {
+			if !c.indexed[i] && !slices.Contains(todo, i) {
+				todo = append(todo, i)
+			}
+		}
+	}
+	c.indexPositions(todo)
+}
+
+// indexAll indexes every remaining file, once.
+func (c *Catalog) indexAll() {
+	if c.complete {
+		return
+	}
+	var todo []int
+	for i, done := range c.indexed {
+		if !done {
+			todo = append(todo, i)
+		}
+	}
+	c.indexPositions(todo)
+	c.complete = true
+}
+
+// indexPositions indexes the files at the given path positions and rebuilds
+// Faces in path order, keeping existing faces, so ties resolve as with a full
+// index.
+func (c *Catalog) indexPositions(todo []int) {
+	if len(todo) == 0 {
+		return
+	}
+	slices.Sort(todo)
+	paths := make([]string, len(todo))
+	for j, i := range todo {
+		paths[j] = c.paths[i]
+		c.indexed[i] = true
+	}
+	entries, err := c.lazy.IndexFiles(paths)
+	if err != nil {
+		c.Diagnostics = append(c.Diagnostics, err)
+	}
+	position := make(map[string]int, len(todo))
+	for _, i := range todo {
+		position[c.paths[i]] = i
+	}
+	for _, entry := range entries {
+		i, ok := position[entry.Path]
+		if !ok {
+			continue
+		}
+		c.faceAt[i] = append(c.faceAt[i], c.newFace(entry))
+	}
+	c.Faces = slices.Concat(c.faceAt...)
+	clear(c.ranked)
+	c.ranked = c.ranked[:0]
+}
+
+func (c *Catalog) newFace(entry FontFile) *Face {
+	return &Face{ID: fmt.Sprintf("%s/%d", entry.Path, entry.Index), Family: entry.Family, familyKey: font.NormalizeFamily(entry.Family), Aspect: entry.Aspect, path: entry.Path, index: entry.Index, unicodeRanges: entry.UnicodeRanges, catalog: c}
+}
+
 func Load(source FontSource) (*Catalog, error) {
+	if lazy, ok := source.(LazySource); ok {
+		return loadLazy(lazy)
+	}
 	if indexed, ok := source.(IndexSource); ok {
 		entries, err := indexed.Index()
 		c := &Catalog{source: indexed}
@@ -307,7 +457,7 @@ func Load(source FontSource) (*Catalog, error) {
 			c.Diagnostics = append(c.Diagnostics, err)
 		}
 		for _, entry := range entries {
-			c.Faces = append(c.Faces, &Face{ID: fmt.Sprintf("%s/%d", entry.Path, entry.Index), Family: entry.Family, familyKey: font.NormalizeFamily(entry.Family), Aspect: entry.Aspect, path: entry.Path, index: entry.Index, unicodeRanges: entry.UnicodeRanges, catalog: c})
+			c.Faces = append(c.Faces, c.newFace(entry))
 		}
 		if len(c.Faces) == 0 {
 			return nil, fmt.Errorf("no usable fonts: %w", err)
@@ -544,6 +694,53 @@ func (c *Catalog) candidates(r Request) []*Face {
 }
 
 func (c *Catalog) rank(r Request) []*Face {
+	if c.lazy != nil && !c.complete {
+		if out, ok := c.rankIndexed(r); ok {
+			return out
+		}
+		c.indexAll()
+	}
+	return c.rankFaces(r)
+}
+
+// rankIndexed indexes the files named after the request's families and ranks
+// them. ok is false when the full index is needed: an explicitly named family
+// matches no file name, or nothing at all matches.
+func (c *Catalog) rankIndexed(r Request) (out []*Face, ok bool) {
+	var keys []string
+	explicit := map[string]bool{}
+	for _, family := range r.Families {
+		family = strings.Trim(family, " \t\"'")
+		if alias, ok := genericKeys[strings.ToLower(family)]; ok {
+			keys = append(keys, alias...)
+		} else {
+			key := font.NormalizeFamily(family)
+			keys = append(keys, key)
+			explicit[key] = true
+		}
+	}
+	keys = append(keys, genericKeys["sans-serif"]...)
+	keys = append(keys, scriptFallbackKeys...)
+	c.indexStems(keys)
+	for key := range explicit {
+		if !c.hasFamily(key) {
+			return nil, false
+		}
+	}
+	out = c.rankFaces(r)
+	return out, len(out) > 0
+}
+
+func (c *Catalog) hasFamily(key string) bool {
+	for _, f := range c.Faces {
+		if f.familyKey == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Catalog) rankFaces(r Request) []*Face {
 	seen := map[*Face]bool{}
 	var out []*Face
 	add := func(f *Face) {
@@ -654,6 +851,10 @@ func namedKeys(r Request) map[string]bool {
 // unknown range data remain eligible; loaded or failed state never moves the
 // window, so later measures cannot admit a different face.
 func (c *Catalog) fallbackWindow(text []rune, r Request) []*Face {
+	if c.lazy != nil {
+		// Any installed face may cover a missing glyph.
+		c.indexAll()
+	}
 	named := namedKeys(r)
 	out := make([]*Face, 0, maxFallbackFaces)
 	for _, f := range c.Faces {

@@ -14,6 +14,14 @@ packages:
       filename: '{{.InterfaceName}}_mock_test.go'
     interfaces:
       target:
+  # Font source seam of the text catalog.
+  github.com/bnema/nefergui/internal/text:
+    config:
+      dir: internal/text
+      pkgname: text
+      filename: '{{.InterfaceName}}_mock_test.go'
+    interfaces:
+      LazySource:
   # Editor ports: same-package mocks in test files.
   github.com/bnema/nefergui/internal/edit:
     config:
