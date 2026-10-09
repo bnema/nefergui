@@ -166,9 +166,14 @@ func (f *Frame) record(img *Image, pipe *Pipeline, width, height int32, initial,
 		return err
 	}
 	f.atlasRecorded = !f.device.atlas.initialized
-	var staging vulkan.Buffer
-	if len(uploads) != 0 {
-		staging = f.glyphStaging.Buffer
+	// Glyph uploads, a new image texture or the first frame each need
+	// transfers before rendering: an image added without new glyphs must
+	// still be uploaded.
+	if len(uploads) != 0 || len(f.imageCopies) != 0 || !f.device.atlas.initialized || !f.device.images.fallbackReady {
+		var staging vulkan.Buffer
+		if len(uploads) != 0 {
+			staging = f.glyphStaging.Buffer
+		}
 		f.device.atlas.recordUploads(f.Commands, staging, uploads)
 		if !f.device.images.fallbackReady {
 			f.recordFallback()
