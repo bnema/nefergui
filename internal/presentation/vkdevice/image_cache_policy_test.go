@@ -42,8 +42,37 @@ func TestImageCacheBudgetAndFenceReuse(t *testing.T) {
 	if _, _, err := p.reserve(nonComparableImage{data: []byte{1}}); err == nil || !strings.Contains(err.Error(), "comparable") {
 		t.Fatalf("expected identity error: %v", err)
 	}
-	if _, _, err := p.reserve(image.NewRGBA(image.Rect(0, 0, 4097, 1))); err == nil || !strings.Contains(err.Error(), "maximum") {
+	if _, _, err := p.reserve(image.NewRGBA(image.Rect(0, 0, maxImageDimension+1, 1))); err == nil || !strings.Contains(err.Error(), "maximum") {
 		t.Fatalf("expected size error: %v", err)
+	}
+}
+
+func TestImageCacheWideImageAndDeviceLimit(t *testing.T) {
+	p := newImageCachePolicy()
+	p.begin(1, 0)
+	// Bounds alone suffice: reserve validates before reading pixels.
+	wide := &image.RGBA{Rect: image.Rect(0, 0, 5120, 2160)}
+	if _, _, err := p.reserve(wide); err != nil {
+		t.Fatalf("ultrawide image: %v", err)
+	}
+	p.maxDimension = 4096
+	if _, _, err := p.reserve(wide); err == nil || !strings.Contains(err.Error(), "maximum 4096") {
+		t.Fatalf("expected device limit: %v", err)
+	}
+	p.maxDimension = maxImageDimension
+	tooLarge := &image.RGBA{Rect: image.Rect(0, 0, 7680, 4320)}
+	if _, _, err := p.reserve(tooLarge); err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Fatalf("expected unchanged byte budget: %v", err)
+	}
+}
+
+func TestImageCacheResolveDeviceLimit(t *testing.T) {
+	p := newImageCachePolicy()
+	p.maxDimension = 4096
+	c := &imageCache{policy: p}
+	wide := &image.RGBA{Rect: image.Rect(0, 0, 5120, 2160)}
+	if _, err := c.resolve(&Frame{}, []Batch{{Source: wide}}); err == nil || !strings.Contains(err.Error(), "maximum 4096") {
+		t.Fatalf("expected frame validation against device limit: %v", err)
 	}
 }
 
