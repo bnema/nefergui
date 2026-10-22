@@ -87,6 +87,7 @@ func (c *imageCache) dispose(entries []*imageEntry) {
 }
 func (d *Device) newImageCache() (c *imageCache, err error) {
 	c = &imageCache{device: d, policy: newImageCachePolicy(), textures: make(map[*imageEntry]*gpuImage), done: make(map[uint64]bool), inflight: make(map[*Frame]struct{})}
+	c.policy.maxDimension = d.imageDimension
 	defer func() {
 		if err != nil {
 			c.Close()
@@ -169,8 +170,8 @@ func (c *imageCache) resolve(f *Frame, batches []Batch) ([]Batch, error) {
 		seen[key] = true
 		count++
 		b := key.Bounds()
-		if b.Dx() <= 0 || b.Dy() <= 0 || b.Dx() > maxImageDimension || b.Dy() > maxImageDimension {
-			return nil, fmt.Errorf("image cache: invalid dimensions %dx%d (maximum %d)", b.Dx(), b.Dy(), maxImageDimension)
+		if b.Dx() <= 0 || b.Dy() <= 0 || b.Dx() > c.policy.maxDimension || b.Dy() > c.policy.maxDimension {
+			return nil, fmt.Errorf("image cache: invalid dimensions %dx%d (maximum %d)", b.Dx(), b.Dy(), c.policy.maxDimension)
 		}
 		if e := c.policy.entries[key]; e != nil {
 			bytes += e.bytes

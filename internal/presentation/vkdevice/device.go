@@ -55,6 +55,7 @@ type Device struct {
 	Validation       *Validation
 	atlas            *glyphAtlas
 	images           *imageCache
+	imageDimension   int // application ceiling clamped to the selected device
 }
 
 func Open(main Identity) (_ *Device, err error) {
@@ -136,6 +137,7 @@ func Open(main Identity) (_ *Device, err error) {
 			}
 		}
 		d.Physical = candidate
+		d.imageDimension = int(min(uint32(maxImageDimension), props.Properties.Limits.MaxImageDimension2D))
 		d.Render = Identity{uint32(drm.RenderMajor), uint32(drm.RenderMinor)}
 		break
 	}

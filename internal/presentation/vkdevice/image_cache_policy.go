@@ -9,7 +9,7 @@ import (
 const maxImageTextures = 64
 const imageDescriptorSlots = maxImageTextures + 1 // one fallback plus the 64-texture budget
 const maxImageBytes = 64 << 20
-const maxImageDimension = 4096
+const maxImageDimension = 8192
 
 type imageEntry struct {
 	key              image.Image
@@ -26,6 +26,7 @@ type imageEntry struct {
 // only then may UpdateDescriptorSets overwrite the recycled set. The pool is
 // destroyed once at shutdown. This avoids requiring FreeDescriptorSets.
 type imageCachePolicy struct {
+	maxDimension     int
 	entries          map[image.Image]*imageEntry
 	free             []int
 	retired          []*imageEntry
@@ -34,7 +35,7 @@ type imageCachePolicy struct {
 }
 
 func newImageCachePolicy() *imageCachePolicy {
-	p := &imageCachePolicy{entries: make(map[image.Image]*imageEntry)}
+	p := &imageCachePolicy{entries: make(map[image.Image]*imageEntry), maxDimension: maxImageDimension}
 	// Slot 0 is permanently reserved for the valid set 1 fallback.
 	for i := imageDescriptorSlots - 1; i >= 1; i-- {
 		p.free = append(p.free, i)
@@ -72,8 +73,8 @@ func (p *imageCachePolicy) reserve(key image.Image) (*imageEntry, []*imageEntry,
 	}
 	bounds := key.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
-	if w <= 0 || h <= 0 || w > maxImageDimension || h > maxImageDimension {
-		return nil, nil, fmt.Errorf("image cache: invalid dimensions %dx%d (maximum %d)", w, h, maxImageDimension)
+	if w <= 0 || h <= 0 || w > p.maxDimension || h > p.maxDimension {
+		return nil, nil, fmt.Errorf("image cache: invalid dimensions %dx%d (maximum %d)", w, h, p.maxDimension)
 	}
 	if e := p.entries[key]; e != nil {
 		e.used, e.lastSerial = p.frame, p.frame
