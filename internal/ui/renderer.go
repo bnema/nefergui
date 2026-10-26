@@ -10,12 +10,12 @@ import (
 	"os"
 	"slices"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/presentation/session"
-	"github.com/bnema/nefergui/internal/presentation/vkdevice"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/presentation/session"
+	"bnema.dev/nefergui/internal/presentation/vkdevice"
+	"bnema.dev/nefergui/internal/text"
 )
 
 // Format is a DRM format and modifier the compositor accepts.

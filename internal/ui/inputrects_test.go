@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/layout"
 	"github.com/stretchr/testify/mock"
 )
 

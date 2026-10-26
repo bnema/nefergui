@@ -2,7 +2,7 @@
 
 package nefergui
 
-import "github.com/bnema/nefergui/internal/ui"
+import "bnema.dev/nefergui/internal/ui"
 
 // Renderer renders views into DMA-BUF buffers for a Wayland client the
 // application owns. It imports no Wayland library, starts no goroutine and is

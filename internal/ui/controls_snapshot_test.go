@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/text"
 )
 
 // The golden is the serialized display list, not a rendered image; each case

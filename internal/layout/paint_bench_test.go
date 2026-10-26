@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/text"
 )
 
 // paintFixture is a product-like tree: cards with background, border, shadows,

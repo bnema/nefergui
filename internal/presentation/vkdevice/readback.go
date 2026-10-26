@@ -8,7 +8,7 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/bnema/purego-vulkan/vulkan"
+	"bnema.dev/purego-vulkan/vulkan"
 )
 
 // Readback is only allocated for tests. Its transfer copy is

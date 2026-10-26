@@ -4,8 +4,8 @@ import (
 	"math"
 	"slices"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/layout"
 )
 
 // paintIndicators adds checkbox and radio indicators and slider tracks after

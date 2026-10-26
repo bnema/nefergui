@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/edit"
 	"github.com/stretchr/testify/mock"
 )
 

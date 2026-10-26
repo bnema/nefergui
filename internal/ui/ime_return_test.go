@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"github.com/bnema/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/edit"
 )
 
 func typed(name, text string) platformInput {

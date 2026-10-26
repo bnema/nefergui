@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/bnema/nefergui"
+	"bnema.dev/nefergui"
 )
 
 // ExampleRenderer shows the shape of a client loop. The Wayland side (display
 // connection, linux-dmabuf feedback, buffer import, event dispatch) belongs to
-// the application, for instance through github.com/bnema/neferclient; it is
+// the application, for instance through bnema.dev/neferclient; it is
 // elided here. The example needs a GPU and a compositor, so it is compiled but
 // not run by go test.
 func ExampleRenderer() {

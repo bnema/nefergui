@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/presentation/buffers"
-	"github.com/bnema/nefergui/internal/presentation/vkdevice"
+	"bnema.dev/nefergui/internal/presentation/buffers"
+	"bnema.dev/nefergui/internal/presentation/vkdevice"
 )
 
 // No GPU needed: the old wait must remain owned until a later readiness check.

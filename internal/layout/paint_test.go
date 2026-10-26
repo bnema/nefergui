@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/css"
 )
 
 // Layout output is detached: neither the shared paint storage nor a later

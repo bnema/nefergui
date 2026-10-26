@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/presentation/session"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/presentation/session"
+	"bnema.dev/nefergui/internal/text"
 	"github.com/stretchr/testify/mock"
 )
 

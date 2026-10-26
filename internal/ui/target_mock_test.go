@@ -5,8 +5,8 @@
 package ui
 
 import (
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/presentation/session"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/presentation/session"
 	mock "github.com/stretchr/testify/mock"
 )
 

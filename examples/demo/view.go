@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/bnema/nefergui"
+	"bnema.dev/nefergui"
 )
 
 type Model struct {

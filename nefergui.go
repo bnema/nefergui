@@ -1,7 +1,7 @@
 // Package nefergui is a pure-Go immediate-mode GUI renderer styled with a
 // bounded CSS dialect (see docs/css.md). It draws with Vulkan into DMA-BUF
 // buffers and imports no Wayland library: the application owns the Wayland
-// client (for example with github.com/bnema/neferclient) and feeds events to a
+// client (for example with bnema.dev/neferclient) and feeds events to a
 // Renderer.
 //
 // A view function builds each frame from a Frame; Frame and its Node handles
@@ -17,11 +17,11 @@
 // docs/troubleshooting.md.
 package nefergui
 
-import "github.com/bnema/nefergui/internal/ui"
+import "bnema.dev/nefergui/internal/ui"
 
 // Frame is valid only during one call to the view function. Root builds the
 // application element; Diagnostics reports identity problems in debug builds.
-// Alias methods are listed by go doc github.com/bnema/nefergui/internal/ui.Frame.
+// Alias methods are listed by go doc bnema.dev/nefergui/internal/ui.Frame.
 type Frame = ui.Frame
 
 // Node is an ephemeral handle into the current frame. Do not retain it between
@@ -30,19 +30,19 @@ type Frame = ui.Frame
 // (Button, Checkbox, Radio, Slider, Input, Textarea, Text, Heading, Image,
 // Icon, Separator, Spacer) declare controls. Interactive controls return event
 // snapshots.
-// Alias methods are listed by go doc github.com/bnema/nefergui/internal/ui.Node.
+// Alias methods are listed by go doc bnema.dev/nefergui/internal/ui.Node.
 type Node = ui.Node
 
 // ButtonEvent is an immutable snapshot queried with Activated.
-// Alias methods are listed by go doc github.com/bnema/nefergui/internal/ui.ButtonEvent.
+// Alias methods are listed by go doc bnema.dev/nefergui/internal/ui.ButtonEvent.
 type ButtonEvent = ui.ButtonEvent
 
 // EditEvent is an immutable snapshot queried with Changed and Submitted.
-// Alias methods are listed by go doc github.com/bnema/nefergui/internal/ui.EditEvent.
+// Alias methods are listed by go doc bnema.dev/nefergui/internal/ui.EditEvent.
 type EditEvent = ui.EditEvent
 
 // ChangeEvent is an immutable snapshot queried with Changed.
-// Alias methods are listed by go doc github.com/bnema/nefergui/internal/ui.ChangeEvent.
+// Alias methods are listed by go doc bnema.dev/nefergui/internal/ui.ChangeEvent.
 type ChangeEvent = ui.ChangeEvent
 
 // Option families are sealed: ContainerOption, ButtonOption, EditOption,

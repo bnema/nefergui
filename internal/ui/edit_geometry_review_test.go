@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/layout"
 )
 
 func TestRTLParagraphCaretUsesPrecedingTrailingEdge(t *testing.T) {

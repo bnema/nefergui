@@ -2,7 +2,7 @@
 
 A pure-Go GUI renderer for Linux: build your view from the current model, style it with CSS, and draw it with Vulkan into DMA-BUF buffers. Controls return events during the view call. No cgo required.
 
-NeferGUI imports no Wayland library. Your application owns the Wayland client (connection, surface, linux-dmabuf feedback, buffer import, seat events) and drives a `Renderer`; [github.com/bnema/neferclient](https://github.com/bnema/neferclient) is a client toolkit built for this. The two do not import each other: the application copies plain fields between them.
+NeferGUI imports no Wayland library. Your application owns the Wayland client (connection, surface, linux-dmabuf feedback, buffer import, seat events) and drives a `Renderer`; [bnema.dev/neferclient](https://github.com/bnema/neferclient) is a client toolkit built for this. The two do not import each other: the application copies plain fields between them.
 
 > [!WARNING]
 > **Early development.** No release yet. Expect bugs and breaking changes. Platform accessibility is not connected.
@@ -54,7 +54,7 @@ cd examples && go run ./demo
 Go 1.27, `libvulkan.so.1` and usable fonts. The GPU must export DMA-BUF and support DRM syncobj timelines (kernel 6.6 or later for eventfd waits). The compositor, reached through your Wayland client, must offer linux-dmabuf and linux-drm-syncobj; fractional scaling also needs viewporter. No X11 or software-rendering fallback.
 
 ```sh
-go get github.com/bnema/nefergui
+go get bnema.dev/nefergui
 ```
 
 ## Documentation

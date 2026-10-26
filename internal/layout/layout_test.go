@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/text"
 )
 
 func px(v float64) css.Length { return css.Length{Value: v, Unit: "px"} }

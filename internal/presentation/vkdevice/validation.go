@@ -9,8 +9,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/bnema/purego"
-	"github.com/bnema/purego-vulkan/vulkan"
+	"bnema.dev/purego"
+	"bnema.dev/purego-vulkan/vulkan"
 )
 
 const validationLayer = "VK_LAYER_KHRONOS_validation"

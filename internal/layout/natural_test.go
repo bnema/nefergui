@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/text"
 )
 
 func naturalEngine(t *testing.T) *text.Engine {

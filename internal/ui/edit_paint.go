@@ -3,9 +3,9 @@ package ui
 import (
 	"math"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/layout"
 )
 
 var selectionColor = css.Color{R: 0.22, G: 0.43, B: 0.85, A: 0.4}

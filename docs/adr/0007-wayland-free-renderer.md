@@ -13,7 +13,7 @@ The public entry point is `Renderer` (`NewRenderer`, `Resize`, `Input`, `Invalid
 - `Render` fills an `Output`: DMA-BUF planes, syncobj timelines, acquire and release points, damage, cursor shape and input region. All file descriptors stay owned by the Renderer; the application duplicates them before a transport consumes them;
 - an eventfd per buffer becomes readable when the compositor releases it; the application then calls `Released`.
 
-Layering is application → Wayland client library → bindings. NeferGUI sits beside the client library, not above it. Applications copy plain fields between the two; neither imports the other. [github.com/bnema/neferclient](https://github.com/bnema/neferclient) is a client toolkit written for this split.
+Layering is application → Wayland client library → bindings. NeferGUI sits beside the client library, not above it. Applications copy plain fields between the two; neither imports the other. [bnema.dev/neferclient](https://github.com/bnema/neferclient) is a client toolkit written for this split.
 
 ## Consequences
 

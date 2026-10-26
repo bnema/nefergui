@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bnema/nefergui/internal/bidi"
+	"bnema.dev/nefergui/internal/bidi"
 	"github.com/go-text/typesetting/font"
 	ot "github.com/go-text/typesetting/font/opentype"
 	"golang.org/x/image/font/sfnt"

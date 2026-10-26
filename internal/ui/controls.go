@@ -2,7 +2,7 @@ package ui
 
 import (
 	"fmt"
-	"github.com/bnema/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/edit"
 	"strconv"
 	"strings"
 )

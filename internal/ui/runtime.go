@@ -4,10 +4,10 @@ import (
 	"context"
 	"sync"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/text"
 )
 
 // inputEvent is routed against the last committed layout. Target is opaque.

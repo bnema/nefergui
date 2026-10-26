@@ -3,7 +3,7 @@
 package session
 
 import (
-	"github.com/bnema/nefergui/internal/presentation/buffers"
+	"bnema.dev/nefergui/internal/presentation/buffers"
 	"testing"
 )
 

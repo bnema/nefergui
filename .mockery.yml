@@ -7,7 +7,7 @@ template-schema: '{{.Template}}.schema.json'
 require-template-schema-exists: true
 packages:
   # Unexported GPU seam of Renderer: the mock lives next to the code, in a test file.
-  github.com/bnema/nefergui/internal/ui:
+  bnema.dev/nefergui/internal/ui:
     config:
       dir: internal/ui
       pkgname: ui
@@ -15,7 +15,7 @@ packages:
     interfaces:
       target:
   # Font source seam of the text catalog.
-  github.com/bnema/nefergui/internal/text:
+  bnema.dev/nefergui/internal/text:
     config:
       dir: internal/text
       pkgname: text
@@ -23,7 +23,7 @@ packages:
     interfaces:
       LazySource:
   # Editor ports: same-package mocks in test files.
-  github.com/bnema/nefergui/internal/edit:
+  bnema.dev/nefergui/internal/edit:
     config:
       dir: internal/edit
       pkgname: edit

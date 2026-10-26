@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/text"
 	"math"
 	"testing"
 )

@@ -21,8 +21,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bnema/neferclient"
-	"github.com/bnema/nefergui"
+	"bnema.dev/neferclient"
+	"bnema.dev/nefergui"
 )
 
 //go:embed app.css

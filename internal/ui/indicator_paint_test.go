@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/layout"
 )
 
 func ownCommands(r *runtime, id string) []layout.Command {

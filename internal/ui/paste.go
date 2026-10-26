@@ -2,7 +2,7 @@ package ui
 
 import (
 	"context"
-	"github.com/bnema/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/edit"
 )
 
 // startPaste is invoked during Build. A worker may only queue its completion;

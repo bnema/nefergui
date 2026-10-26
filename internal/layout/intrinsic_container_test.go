@@ -3,7 +3,7 @@ package layout
 import (
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/css"
 )
 
 func TestAutoFlexColumnReservesChildrenAndGaps(t *testing.T) {

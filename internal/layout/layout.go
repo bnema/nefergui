@@ -8,8 +8,8 @@ import (
 	"math"
 	"slices"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/text"
 	"github.com/go-text/typesetting/di"
 )
 

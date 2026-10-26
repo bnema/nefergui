@@ -7,8 +7,8 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/bnema/nefergui/internal/text"
-	"github.com/bnema/purego-vulkan/vulkan"
+	"bnema.dev/nefergui/internal/text"
+	"bnema.dev/purego-vulkan/vulkan"
 )
 
 // AtlasSize and AtlasPages are shared with the CPU preparer at the session boundary.

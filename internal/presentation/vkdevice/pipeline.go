@@ -8,8 +8,8 @@ import (
 	"image"
 	"unsafe"
 
-	"github.com/bnema/nefergui/internal/presentation/shaders"
-	"github.com/bnema/purego-vulkan/vulkan"
+	"bnema.dev/nefergui/internal/presentation/shaders"
+	"bnema.dev/purego-vulkan/vulkan"
 )
 
 // Instance is a physical-pixel list quad. Color is straight sRGB; the shader

@@ -7,8 +7,8 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/bnema/nefergui/internal/text"
-	"github.com/bnema/purego-vulkan/vulkan"
+	"bnema.dev/nefergui/internal/text"
+	"bnema.dev/purego-vulkan/vulkan"
 )
 
 // Frame records into its own command buffer and signals a binary semaphore.

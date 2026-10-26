@@ -4,9 +4,9 @@ import (
 	"image"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/text"
 )
 
 // listFixture is a product-like mix: atlas draws with an image every 50 quads.

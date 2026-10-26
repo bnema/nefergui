@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/text"
 )
 
 // platformInput is the UI-loop port. Coordinates and viewport dimensions are

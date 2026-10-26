@@ -1,8 +1,8 @@
 package render
 
 import (
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/presentation/vkdevice"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/presentation/vkdevice"
 )
 
 // ListStats reports every skipped prepared quad by operation.

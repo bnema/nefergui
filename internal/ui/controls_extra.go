@@ -1,8 +1,8 @@
 package ui
 
 import (
-	vi "github.com/bnema/nefergui/internal/image"
-	"github.com/bnema/nefergui/internal/layout"
+	vi "bnema.dev/nefergui/internal/image"
+	"bnema.dev/nefergui/internal/layout"
 	"image"
 	"math"
 	"strings"

@@ -2,7 +2,7 @@ package text
 
 import (
 	"errors"
-	"github.com/bnema/nefergui/internal/bidi"
+	"bnema.dev/nefergui/internal/bidi"
 )
 
 type paragraphRange struct{ start, end int }

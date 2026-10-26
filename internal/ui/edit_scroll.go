@@ -3,7 +3,7 @@ package ui
 import (
 	"math"
 
-	"github.com/bnema/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/layout"
 )
 
 func (r *runtime) scrollCaret(root *element, out *layout.Output) bool {

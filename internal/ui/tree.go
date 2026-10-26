@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"image"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/layout"
 )
 
 // Identity is a path of sibling-local keys or positional element identities.

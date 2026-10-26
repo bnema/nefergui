@@ -3,8 +3,8 @@ package ui
 import (
 	"math"
 
-	"github.com/bnema/nefergui/internal/edit"
-	"github.com/bnema/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/edit"
+	"bnema.dev/nefergui/internal/layout"
 )
 
 // moveVisualLine uses the last committed wrap geometry; preferred X survives

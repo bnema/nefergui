@@ -3,9 +3,9 @@ package render
 import (
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/text"
 )
 
 // BenchmarkPrepare exercises the product example's text and box display-list mix.

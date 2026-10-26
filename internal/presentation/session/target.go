@@ -8,13 +8,13 @@ import (
 	"image"
 	"path/filepath"
 
-	"github.com/bnema/purego-vulkan/vulkan"
+	"bnema.dev/purego-vulkan/vulkan"
 
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/presentation/buffers"
-	"github.com/bnema/nefergui/internal/presentation/syncobj"
-	"github.com/bnema/nefergui/internal/presentation/vkdevice"
-	"github.com/bnema/nefergui/internal/render"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/presentation/buffers"
+	"bnema.dev/nefergui/internal/presentation/syncobj"
+	"bnema.dev/nefergui/internal/presentation/vkdevice"
+	"bnema.dev/nefergui/internal/render"
 	"golang.org/x/sys/unix"
 )
 

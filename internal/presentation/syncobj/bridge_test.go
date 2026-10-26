@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/bnema/nefergui/internal/presentation/syncobj"
-	"github.com/bnema/nefergui/internal/presentation/vkdevice"
+	"bnema.dev/nefergui/internal/presentation/syncobj"
+	"bnema.dev/nefergui/internal/presentation/vkdevice"
 	"golang.org/x/sys/unix"
 )
 

@@ -1,6 +1,6 @@
 # Controls
 
-Import `github.com/bnema/nefergui`. Public `Frame`, `Node` and event types alias their implementation types, so `go doc` does not list their methods at the root. Inspect signatures with `go doc github.com/bnema/nefergui/internal/ui.Node` (or `.Frame`, `.ButtonEvent`, `.EditEvent`, `.ChangeEvent`). Applications still use the public package; do not import `internal/ui`.
+Import `bnema.dev/nefergui`. Public `Frame`, `Node` and event types alias their implementation types, so `go doc` does not list their methods at the root. Inspect signatures with `go doc bnema.dev/nefergui/internal/ui.Node` (or `.Frame`, `.ButtonEvent`, `.EditEvent`, `.ChangeEvent`). Applications still use the public package; do not import `internal/ui`.
 
 `ButtonEvent.Activated()` reports activation; `EditEvent.Changed()` and `.Submitted()` report edits and submission; `ChangeEvent.Changed()` reports value changes. These snapshots can be queried repeatedly without consuming an event.
 

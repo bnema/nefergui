@@ -7,8 +7,8 @@ package session
 import (
 	"fmt"
 
-	"github.com/bnema/nefergui/internal/presentation/buffers"
-	"github.com/bnema/nefergui/internal/presentation/vkdevice"
+	"bnema.dev/nefergui/internal/presentation/buffers"
+	"bnema.dev/nefergui/internal/presentation/vkdevice"
 )
 
 // Slot is the GPU side of one pool buffer. Descriptors are -1 when unset.

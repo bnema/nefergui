@@ -3,9 +3,9 @@ package ui
 import (
 	"testing"
 
-	"github.com/bnema/nefergui/internal/css"
-	"github.com/bnema/nefergui/internal/layout"
-	"github.com/bnema/nefergui/internal/text"
+	"bnema.dev/nefergui/internal/css"
+	"bnema.dev/nefergui/internal/layout"
+	"bnema.dev/nefergui/internal/text"
 )
 
 // Every visible string a view declares must reach the display list as shaped

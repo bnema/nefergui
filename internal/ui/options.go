@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/bnema/nefergui/internal/css"
+import "bnema.dev/nefergui/internal/css"
 
 // ContainerOption, ButtonOption and EditOption are separate option families.
 type ContainerOption interface{ container(*element) }
